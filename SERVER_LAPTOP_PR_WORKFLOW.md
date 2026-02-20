@@ -1,0 +1,35 @@
+# Server/Laptop PR Workflow
+
+Use this process when developing on laptop and deploying/running on the server machine.
+
+## Branch + PR rule
+
+1. Create a feature branch on laptop from `main`.
+2. Commit focused changes.
+3. Push branch to origin.
+4. Open a Pull Request into `main`.
+5. Merge PR after checks/review.
+6. On server machine, pull `main` only.
+
+## Server machine rule
+
+- Server is runtime/stability-first.
+- Do not do long-lived feature development directly on server `main`.
+- Use server for Tabletop Simulator + bot runtime validation.
+
+## Pull commands on server
+
+```powershell
+git checkout main
+git pull --rebase origin main
+```
+
+## Emergency hotfix
+
+If a production hotfix is required from server:
+
+1. Create `hotfix/<short-name>` branch.
+2. Commit + push.
+3. Open PR to `main`.
+4. Merge PR.
+5. Pull `main` again on server.
