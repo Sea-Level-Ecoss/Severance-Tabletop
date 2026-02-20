@@ -33,3 +33,20 @@ If the target manual slot JSON does not exist, the script initializes it from `T
 5. Save in TTS, then return to step 1 for next script pass.
 
 This keeps scene building and Lua/script iteration predictable and avoids autosave targeting confusion.
+
+## Server Repo Sync (All Projects)
+
+From a machine that hosts your bot/runtime services, you can clone-or-pull all Sea Level repos in one pass:
+
+- `./tools/sync-all-sea-level-repos.ps1`
+- Optional root override:
+	- `./tools/sync-all-sea-level-repos.ps1 -RootDir "D:/Sea Level"`
+
+The script covers:
+
+- AntiPwr.github.io
+- Seventh-Severance-Unity
+- Sea-Level-Launcher
+- Severance-Tabletop
+- VivBot
+- GrilwurtBot
