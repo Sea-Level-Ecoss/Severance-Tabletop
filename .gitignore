@@ -1,0 +1,9 @@
+# Local caches
+/data/
+
+# TTS local or temp exports
+/tts/local/
+
+# OS
+Thumbs.db
+.DS_Store

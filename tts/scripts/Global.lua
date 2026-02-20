@@ -1,0 +1,1727 @@
+-- Severance Tabletop (TTS)
+-- Milestone 1: deckbuilding flow + API hooks
+
+local config = {
+  apiBaseUrl = "http://localhost:8787",
+  defaultStatus = "all",
+  imageBaseUrl = "http://localhost:8787/images/ss_cards",
+  imagePathMode = "auto",
+  defaultCardBackUrl = "http://localhost:8787/images/ss_cards/card_back.png",
+  fallbackCardFaceUrl = "http://localhost:8787/images/ss_cards/card_back.png",
+  cacheTtlSeconds = 300,
+  optionCountPerStep = 3,
+  picksPerStep = 2,
+  drawEligibleStatuses = {
+    shippable = true,
+    gameplay_ready = true,
+  },
+}
+
+local rulebookGuides = {
+  PresenceRulebook = {
+    title = "Presence Rulebook",
+    body = [[
+SEVERANCE TABLETOP — PRESENCE GUIDE
+
+Goal
+- Build and pilot the Presence deck through the rank flow.
+
+Quick Start
+1) Click "Build Presence Deck".
+2) Use "Search Cards" to inspect options.
+3) Enter a card id in search input, then click "Pick Search ID".
+4) Repeat until all taxon steps finish, then click "Finalize Deck".
+
+Deck Import
+- Paste one card id per line in Import input.
+- Click "Import Decklist".
+
+Manual Add
+- Enter a card id in Search input.
+- Click "Add Search ID Manually".
+
+Notes
+- "Refresh Cache" reloads cards from local API.
+- Some cards may be manual-only until completion status is draw-eligible.
+- Update this object text as rules evolve.
+]],
+  },
+  AbsenceRulebook = {
+    title = "Absence Rulebook",
+    body = [[
+SEVERANCE TABLETOP — ABSENCE GUIDE
+
+Goal
+- Build and pilot the Absence deck through reversed rank flow.
+
+Quick Start
+1) Click "Build Absence Deck".
+2) Use "Search Cards" to inspect options.
+3) Enter a card id in search input, then click "Pick Search ID".
+4) Repeat until all taxon steps finish, then click "Finalize Deck".
+
+Deck Import
+- Paste one card id per line in Import input.
+- Click "Import Decklist".
+
+Manual Add
+- Enter a card id in Search input.
+- Click "Add Search ID Manually".
+
+Notes
+- "Refresh Cache" reloads cards from local API.
+- Incomplete cards can still be tested via manual add when needed.
+- Update this object text as rules evolve.
+]],
+  },
+}
+
+local state = {
+  cards = {},
+  lastFetch = 0,
+  deckbuild = nil,
+  roundValue = 1,
+  statusText = "Ready. Open deckbuilder from a tagged opener object.",
+  taxonSettings = {
+    presence = { includeBinBasin = true },
+    absence = { includeBinBasin = true },
+  },
+}
+
+local uiXml = nil
+local uiState = {
+  deckbuilderVisible = false,
+  currentDeckbuilderRole = nil,
+}
+local zoneRefs = {
+  presenceDeck = nil,
+  presenceDiscard = nil,
+  absenceDeck = nil,
+  absenceDiscard = nil,
+}
+
+local tags = {
+  presenceRulebook = "PresenceRulebook",
+  absenceRulebook = "AbsenceRulebook",
+  deckbuilderOpener = "DeckbuilderOpener",
+  presenceDeckbuilder = "PresenceDeckbuilder",
+  absenceDeckbuilder = "AbsenceDeckbuilder",
+  presenceDeck = "PresenceDeck",
+  absenceDeck = "AbsenceDeck",
+  presenceTaxonCalc = "PresenceTaxonCalc",
+  absenceTaxonCalc = "AbsenceTaxonCalc",
+  presenceEssa = "PresenceEssa",
+  absenceEssa = "AbsenceEssa",
+}
+
+local taxonRanks = { "Bin", "Basin", "Eco", "Kingdom", "Phylum", "Class", "Order", "Family", "Essa" }
+
+local uiRefs = {
+  roundLabelButtonIndex = nil,
+}
+
+local roleZones = {
+  presence = {
+    deck = { -22, 1.2, -18 },
+    discard = { -16, 1.2, -18 },
+    rotation = { 0, 180, 0 },
+  },
+  absence = {
+    deck = { 22, 1.2, 18 },
+    discard = { 16, 1.2, 18 },
+    rotation = { 0, 0, 0 },
+  },
+}
+
+function onLoad(savedState)
+  if savedState and savedState ~= "" then
+    local ok, decoded = pcall(JSON.decode, savedState)
+    if ok and decoded then
+      state.cards = decoded.cards or {}
+      state.lastFetch = decoded.lastFetch or 0
+      state.deckbuild = decoded.deckbuild or nil
+      state.roundValue = decoded.roundValue or 1
+      state.statusText = decoded.statusText or state.statusText
+      state.taxonSettings = decoded.taxonSettings or state.taxonSettings
+    end
+  end
+
+  safeRun("resolve ui xml", function()
+    if self and self.getVar then
+      uiXml = self.getVar("uiXml")
+    end
+  end)
+
+  uiState.deckbuilderVisible = false
+
+  safeRun("create round tracker", createRoundTrackerButtons)
+  safeRun("add menu open", function()
+    addContextMenuItem("Open Deckbuilder UI", onOpenDeckbuilderFromContext, false, true)
+  end)
+  safeRun("add menu hide", function()
+    addContextMenuItem("Hide Deckbuilder UI", onHideDeckbuilderFromContext, false, true)
+  end)
+  safeRun("add menu rulebooks", function()
+    addContextMenuItem("Refresh Rulebooks", onRefreshRulebooksFromContext, false, true)
+  end)
+  safeRun("ensure zones", ensureZoneMarkers)
+  safeRun("schedule refreshes", scheduleRulebookRefreshes)
+  safeRun("ensure taxon calculators", ensureTaxonCalculators)
+  safeRun("refresh taxon calculators", refreshTaxonCalculators)
+  safeRun("update round ui", updateRoundTrackerUi)
+  safeRun("update status", function()
+    updateStatusUi(state.statusText or "Ready. Open deckbuilder from a tagged opener object.")
+  end)
+
+  safeRun("hide deckbuilder deferred", function()
+    Wait.frames(function()
+      closeDeckbuilderUi()
+    end, 1)
+  end)
+end
+
+function safeRun(label, fn)
+  local ok, err = pcall(fn)
+  if not ok then
+    print("[Severance onLoad] " .. tostring(label) .. " failed: " .. tostring(err))
+  end
+end
+
+function safeUiSetXml(xml)
+  local ok, err = pcall(function()
+    UI.setXml(xml)
+  end)
+  if not ok then
+    print("[Severance UI] setXml failed: " .. tostring(err))
+    return false
+  end
+  return true
+end
+
+function onObjectSpawn(obj)
+  Wait.frames(function()
+    if not obj or obj.isDestroyed() then return end
+
+    local role = detectDeckbuilderRole(obj)
+    if role ~= nil then
+      attachDeckbuilderPanelButton(obj, role)
+    end
+
+    if objectHasTag(obj, tags.presenceRulebook) or objectHasTag(obj, tags.absenceRulebook) then
+      refreshRulebookObjects()
+    end
+
+    if objectHasTag(obj, tags.presenceTaxonCalc) or objectHasTag(obj, tags.absenceTaxonCalc)
+      or objectHasTag(obj, tags.presenceEssa) or objectHasTag(obj, tags.absenceEssa)
+    then
+      ensureTaxonCalculators()
+      refreshTaxonCalculators()
+    end
+  end, 1)
+end
+
+function onObjectEnterScriptingZone(zone, obj)
+  if not zone or zone.isDestroyed() then return end
+  if zoneHasAnyTag(zone, { "PresencePlayZone", "AbsencePlayZone", tags.presenceEssa, tags.absenceEssa }) then
+    refreshTaxonCalculators()
+  end
+end
+
+function onObjectLeaveScriptingZone(zone, obj)
+  if not zone or zone.isDestroyed() then return end
+  if zoneHasAnyTag(zone, { "PresencePlayZone", "AbsencePlayZone", tags.presenceEssa, tags.absenceEssa }) then
+    refreshTaxonCalculators()
+  end
+end
+
+function onOpenDeckbuilderFromContext(playerColor, menuPosition)
+  openDeckbuilderUi(playerColor)
+end
+
+function onHideDeckbuilderFromContext(playerColor, menuPosition)
+  closeDeckbuilderUi(playerColor)
+end
+
+function onCloseDeckbuilderUi(playerColor, value, id)
+  closeDeckbuilderUi(playerColor)
+end
+
+function onDeckbuilderOpenerClicked(obj, playerColor, altClick)
+  if uiState.deckbuilderVisible then
+    closeDeckbuilderUi(playerColor)
+    return
+  end
+  openDeckbuilderUi(playerColor)
+end
+
+function onPresenceDeckbuilderClicked(obj, playerColor, altClick)
+  openDeckbuilderForRole("presence", playerColor)
+end
+
+function onAbsenceDeckbuilderClicked(obj, playerColor, altClick)
+  openDeckbuilderForRole("absence", playerColor)
+end
+
+function openDeckbuilderForRole(role, playerColor)
+  if role == "presence" or role == "absence" then
+    uiState.currentDeckbuilderRole = role
+  end
+
+  openDeckbuilderUi(playerColor)
+  applyDeckbuilderRoleMode()
+
+  if playerColor and uiState.currentDeckbuilderRole then
+    local label = uiState.currentDeckbuilderRole == "presence" and "Presence" or "Absence"
+    broadcastToColor(label .. " deckbuilder panel opened.", playerColor, { 0.8, 1, 0.8 })
+  end
+end
+
+function openDeckbuilderUi(playerColor)
+  if not uiXml or uiXml == "" then
+    local rootActive = pcall(function()
+      return UI.getAttribute("root", "active")
+    end)
+    if not rootActive then
+      if playerColor then
+        broadcastToColor("Deckbuilder UI XML is missing.", playerColor, { 1, 0.5, 0.5 })
+      end
+      return
+    end
+  end
+
+  if not uiState.deckbuilderVisible then
+    local showedExisting = pcall(function()
+      UI.setAttribute("root", "active", "true")
+    end)
+
+    if not showedExisting and uiXml and uiXml ~= "" then
+      showedExisting = safeUiSetXml(uiXml)
+    end
+
+    uiState.deckbuilderVisible = showedExisting == true
+    if not uiState.deckbuilderVisible then
+      return
+    end
+  end
+  applyDeckbuilderRoleMode()
+  updateStatusUi(state.statusText)
+end
+
+function closeDeckbuilderUi(playerColor)
+  pcall(function()
+    UI.setAttribute("root", "active", "false")
+  end)
+
+  if uiState.deckbuilderVisible then
+    uiState.deckbuilderVisible = false
+    uiState.currentDeckbuilderRole = nil
+    if playerColor then
+      broadcastToColor("Deckbuilder UI hidden.", playerColor, { 0.8, 1, 0.8 })
+    end
+  end
+end
+
+function ensureDeckbuilderOpeners()
+  local allObjects = getObjects() or {}
+  for _, obj in ipairs(allObjects) do
+    local role = detectDeckbuilderRole(obj)
+    if role ~= nil then
+      attachDeckbuilderPanelButton(obj, role)
+    elseif objectHasTag(obj, tags.deckbuilderOpener) then
+      attachDeckbuilderOpenerButton(obj)
+    end
+  end
+end
+
+function detectDeckbuilderRole(obj)
+  if not obj or obj.isDestroyed() then return nil end
+
+  if objectHasTag(obj, tags.presenceDeckbuilder) then return "presence" end
+  if objectHasTag(obj, tags.absenceDeckbuilder) then return "absence" end
+
+  local name = string.lower(trim(obj.getName() or ""))
+  if name == string.lower(tags.presenceDeckbuilder) then return "presence" end
+  if name == string.lower(tags.absenceDeckbuilder) then return "absence" end
+
+  return nil
+end
+
+function attachDeckbuilderPanelButton(obj, role)
+  if not obj or obj.isDestroyed() then return end
+
+  local clickFunction = role == "presence" and "onPresenceDeckbuilderClicked" or "onAbsenceDeckbuilderClicked"
+  local buttonLabel = role == "presence" and "Presence Deckbuilder" or "Absence Deckbuilder"
+
+  local existing = obj.getButtons() or {}
+  for _, btn in ipairs(existing) do
+    if btn and btn.click_function == clickFunction then
+      return
+    end
+  end
+
+  obj.createButton({
+    label = buttonLabel,
+    click_function = clickFunction,
+    function_owner = self,
+    position = { 0, 0.35, 0 },
+    rotation = { 0, 180, 0 },
+    width = 2600,
+    height = 520,
+    font_size = 250,
+    color = role == "presence" and { 0.12, 0.2, 0.35 } or { 0.28, 0.12, 0.3 },
+    font_color = { 0.95, 0.95, 0.95 },
+    tooltip = "Left-click to open " .. buttonLabel,
+  })
+end
+
+function attachDeckbuilderOpenerButton(obj)
+  if not obj or obj.isDestroyed() then return end
+
+  local existing = obj.getButtons() or {}
+  for _, btn in ipairs(existing) do
+    if btn and btn.click_function == "onDeckbuilderOpenerClicked" then
+      return
+    end
+  end
+
+  obj.createButton({
+    label = "Deckbuilder",
+    click_function = "onDeckbuilderOpenerClicked",
+    function_owner = self,
+    position = { 0, 0.35, 0 },
+    rotation = { 0, 180, 0 },
+    width = 2000,
+    height = 500,
+    font_size = 280,
+    color = { 0.12, 0.12, 0.12 },
+    font_color = { 0.95, 0.95, 0.95 },
+    tooltip = "Left-click to open/close Severance Deckbuilder UI",
+  })
+end
+
+function scheduleRulebookRefreshes()
+  Wait.frames(function()
+    refreshRulebookObjects()
+    ensureDeckbuilderOpeners()
+    ensureTaxonCalculators()
+    refreshTaxonCalculators()
+  end, 1)
+
+  Wait.frames(function()
+    refreshRulebookObjects()
+    ensureDeckbuilderOpeners()
+    ensureTaxonCalculators()
+    refreshTaxonCalculators()
+  end, 30)
+
+  Wait.frames(function()
+    refreshRulebookObjects()
+    ensureDeckbuilderOpeners()
+    ensureTaxonCalculators()
+    refreshTaxonCalculators()
+  end, 120)
+end
+
+function ensureTaxonCalculators()
+  ensureTaxonCalculatorRole("presence")
+  ensureTaxonCalculatorRole("absence")
+end
+
+function ensureTaxonCalculatorRole(roleKey)
+  local tagName = roleKey == "presence" and tags.presenceTaxonCalc or tags.absenceTaxonCalc
+  local tagged = getObjectsWithTag(tagName) or {}
+  for _, obj in ipairs(tagged) do
+    attachTaxonCalculatorButtons(obj, roleKey)
+  end
+end
+
+function attachTaxonCalculatorButtons(obj, roleKey)
+  if not obj or obj.isDestroyed() then return end
+
+  local toggleFn = roleKey == "presence" and "onTogglePresenceBinBasin" or "onToggleAbsenceBinBasin"
+  local header = roleKey == "presence" and "Presence Taxon Calculator" or "Absence Taxon Calculator"
+
+  pcall(function()
+    obj.clearButtons()
+  end)
+
+  obj.createButton({
+    label = header .. "\n(loading...)",
+    click_function = "onRulebookTextNoop",
+    function_owner = self,
+    position = { 0, 0.32, 0 },
+    rotation = { 0, 180, 0 },
+    width = 2500,
+    height = 1800,
+    font_size = 120,
+    color = { 0.06, 0.06, 0.08, 0.92 },
+    font_color = { 0.95, 0.95, 0.95 },
+    tooltip = header,
+  })
+
+  obj.createButton({
+    label = "Toggle Bin/Basin",
+    click_function = toggleFn,
+    function_owner = self,
+    position = { 0, 0.33, -0.95 },
+    rotation = { 0, 180, 0 },
+    width = 1400,
+    height = 280,
+    font_size = 120,
+    color = { 0.18, 0.24, 0.32, 0.96 },
+    font_color = { 1, 1, 1 },
+    tooltip = "Toggle visibility and backend inclusion for Bin/Basin",
+  })
+end
+
+function onTogglePresenceBinBasin(obj, playerColor, altClick)
+  toggleBinBasin("presence", playerColor)
+end
+
+function onToggleAbsenceBinBasin(obj, playerColor, altClick)
+  toggleBinBasin("absence", playerColor)
+end
+
+function toggleBinBasin(roleKey, playerColor)
+  local settings = state.taxonSettings[roleKey] or { includeBinBasin = true }
+  settings.includeBinBasin = not (settings.includeBinBasin == true)
+  state.taxonSettings[roleKey] = settings
+  refreshTaxonCalculatorRole(roleKey)
+
+  if playerColor then
+    local mode = settings.includeBinBasin and "ON" or "OFF"
+    broadcastToColor(capitalize(roleKey) .. " Bin/Basin: " .. mode, playerColor, { 0.8, 1, 0.8 })
+  end
+end
+
+function refreshTaxonCalculators()
+  refreshTaxonCalculatorRole("presence")
+  refreshTaxonCalculatorRole("absence")
+end
+
+function refreshTaxonCalculatorRole(roleKey)
+  local calcTag = roleKey == "presence" and tags.presenceTaxonCalc or tags.absenceTaxonCalc
+  local calculators = getObjectsWithTag(calcTag) or {}
+  if #calculators == 0 then return end
+
+  local settings = state.taxonSettings[roleKey] or { includeBinBasin = true }
+  local rankValues = calculateTaxonValues(roleKey, settings.includeBinBasin)
+  local comboText = detectTaxonCombos(rankValues, settings.includeBinBasin)
+
+  for _, calcObj in ipairs(calculators) do
+    if calcObj and not calcObj.isDestroyed() then
+      renderTaxonCalculator(calcObj, roleKey, rankValues, comboText, settings.includeBinBasin)
+    end
+  end
+end
+
+function calculateTaxonValues(roleKey, includeBinBasin)
+  local valuesByRank = {}
+  for _, rank in ipairs(taxonRanks) do
+    valuesByRank[rank] = {}
+  end
+
+  local playObjects = collectRolePlayObjects(roleKey)
+  for _, source in ipairs(playObjects) do
+    local extracted = extractTaxonomyFromSource(source)
+    for _, rank in ipairs(taxonRanks) do
+      local val = trim(extracted[rank] or "")
+      if val ~= "" then
+        table.insert(valuesByRank[rank], val)
+      end
+    end
+  end
+
+  local resolved = {}
+  for _, rank in ipairs(taxonRanks) do
+    if (rank == "Bin" or rank == "Basin") and not includeBinBasin then
+      resolved[rank] = "-"
+    else
+      resolved[rank] = pickMostFrequent(valuesByRank[rank]) or "X"
+    end
+  end
+
+  local essaPresent = hasEssaForRole(roleKey)
+  resolved["Essa"] = essaPresent and "1" or "X"
+
+  return resolved
+end
+
+function hasEssaForRole(roleKey)
+  local essaTag = roleKey == "presence" and tags.presenceEssa or tags.absenceEssa
+  local essaZones = getObjectsWithTag(essaTag) or {}
+  for _, zone in ipairs(essaZones) do
+    if zone and not zone.isDestroyed() then
+      local ok, objs = pcall(function()
+        return zone.getObjects(true)
+      end)
+      if ok and objs and #objs > 0 then
+        return true
+      end
+    end
+  end
+  return false
+end
+
+function collectRolePlayObjects(roleKey)
+  local zoneTags = roleKey == "presence"
+    and { "PresencePlayZone", "PresencePlay", "PresenceInPlay" }
+    or { "AbsencePlayZone", "AbsencePlay", "AbsenceInPlay" }
+
+  local results = {}
+  for _, tagName in ipairs(zoneTags) do
+    local zones = getObjectsWithTag(tagName) or {}
+    for _, zone in ipairs(zones) do
+      if zone and not zone.isDestroyed() then
+        local ok, objs = pcall(function()
+          return zone.getObjects(true)
+        end)
+        if ok and objs then
+          for _, o in ipairs(objs) do
+            if o and not o.isDestroyed() then
+              table.insert(results, o)
+            end
+          end
+        end
+      end
+    end
+  end
+  return results
+end
+
+function extractTaxonomyFromSource(source)
+  local out = {}
+  for _, rank in ipairs(taxonRanks) do
+    out[rank] = ""
+  end
+
+  local text = ""
+  if type(source) == "table" and source.getDescription then
+    local okDesc, desc = pcall(function() return source.getDescription() end)
+    if okDesc and desc then text = tostring(desc) end
+  elseif type(source) == "table" and source.Description then
+    text = tostring(source.Description)
+  end
+
+  local payload = parseBackendPayloadFromDescription(text)
+  if payload then
+    for _, rank in ipairs(taxonRanks) do
+      local lower = string.lower(rank)
+      local v = payload[lower] or payload[rank]
+      if v == nil and payload.taxonomy then
+        v = payload.taxonomy[lower] or payload.taxonomy[rank]
+      end
+      if type(v) == "table" then
+        v = v.name or v.value or v.id or ""
+      end
+      out[rank] = trim(v or "")
+    end
+  end
+
+  if out["Essa"] == "" then
+    local essa = string.match(text or "", "Essa:%s*([^\n\r]+)")
+    out["Essa"] = trim(essa or "")
+  end
+
+  return out
+end
+
+function parseBackendPayloadFromDescription(desc)
+  local text = tostring(desc or "")
+  if text == "" then return nil end
+
+  local payloadText = nil
+  local markerStart = string.find(text, "Backend Data:", 1, true)
+  if markerStart then
+    payloadText = string.sub(text, markerStart + string.len("Backend Data:"))
+    payloadText = trim(payloadText)
+  else
+    payloadText = text
+  end
+
+  local ok, payload = pcall(JSON.decode, payloadText)
+  if ok and payload then return payload end
+  return nil
+end
+
+function pickMostFrequent(list)
+  if not list or #list == 0 then return nil end
+  local counts = {}
+  local firstSeen = {}
+  local order = 0
+  for _, raw in ipairs(list) do
+    local value = trim(raw)
+    if value ~= "" then
+      counts[value] = (counts[value] or 0) + 1
+      if not firstSeen[value] then
+        order = order + 1
+        firstSeen[value] = order
+      end
+    end
+  end
+
+  local bestValue = nil
+  local bestCount = -1
+  local bestOrder = math.huge
+  for value, count in pairs(counts) do
+    local seen = firstSeen[value] or math.huge
+    if count > bestCount or (count == bestCount and seen < bestOrder) then
+      bestValue = value
+      bestCount = count
+      bestOrder = seen
+    end
+  end
+  return bestValue
+end
+
+function detectTaxonCombos(rankValues, includeBinBasin)
+  local chain = {}
+  for _, rank in ipairs(taxonRanks) do
+    if includeBinBasin or (rank ~= "Bin" and rank ~= "Basin") then
+      local v = trim(rankValues[rank] or "")
+      table.insert(chain, { rank = rank, value = v })
+    end
+  end
+
+  local hasThreeInRow = false
+  local pairRuns = 0
+  local runStart = 1
+  while runStart <= #chain do
+    local runEnd = runStart
+    local runVal = chain[runStart].value
+    while runEnd + 1 <= #chain and chain[runEnd + 1].value == runVal do
+      runEnd = runEnd + 1
+    end
+
+    local runLen = runEnd - runStart + 1
+    if runVal ~= "" and runVal ~= "X" and runVal ~= "-" then
+      if runLen >= 3 then
+        hasThreeInRow = true
+      end
+      if runLen >= 2 then
+        pairRuns = pairRuns + math.floor(runLen / 2)
+      end
+    end
+    runStart = runEnd + 1
+  end
+
+  local combos = {}
+  if hasThreeInRow then
+    table.insert(combos, "3 in a row")
+  end
+  if pairRuns >= 2 then
+    table.insert(combos, "two sets of two")
+  end
+
+  if #combos == 0 then
+    return "Combo: none"
+  end
+  return "Combo: " .. table.concat(combos, " | ")
+end
+
+function renderTaxonCalculator(calcObj, roleKey, rankValues, comboText, includeBinBasin)
+  if not calcObj or calcObj.isDestroyed() then return end
+
+  local lines = {}
+  local roleLabel = roleKey == "presence" and "Presence" or "Absence"
+  table.insert(lines, roleLabel .. " Taxon Calculator")
+  table.insert(lines, "")
+
+  for _, rank in ipairs(taxonRanks) do
+    if includeBinBasin or (rank ~= "Bin" and rank ~= "Basin") then
+      table.insert(lines, rank .. ": " .. tostring(rankValues[rank] or "X"))
+    end
+  end
+
+  table.insert(lines, "")
+  table.insert(lines, comboText)
+
+  local display = table.concat(lines, "\n")
+
+  local okMain = pcall(function()
+    calcObj.editButton({
+      index = 0,
+      label = display,
+      font_size = 118,
+    })
+  end)
+
+  if not okMain then
+    attachTaxonCalculatorButtons(calcObj, roleKey)
+    pcall(function()
+      calcObj.editButton({ index = 0, label = display, font_size = 118 })
+    end)
+  end
+
+  pcall(function()
+    calcObj.editButton({
+      index = 1,
+      label = includeBinBasin and "Toggle Bin/Basin (ON)" or "Toggle Bin/Basin (OFF)",
+    })
+  end)
+
+  calcObj.setDescription(display)
+end
+
+function zoneHasAnyTag(zone, tagList)
+  for _, t in ipairs(tagList or {}) do
+    if objectHasTag(zone, t) then
+      return true
+    end
+  end
+  return false
+end
+
+function onRefreshRulebooksFromContext(playerColor, menuPosition)
+  refreshRulebookObjects(playerColor)
+end
+
+function refreshRulebookObjects(playerColor)
+  local updatedCount = 0
+  updatedCount = updatedCount + applyRulebookGuide(tags.presenceRulebook, rulebookGuides.PresenceRulebook)
+  updatedCount = updatedCount + applyRulebookGuide(tags.absenceRulebook, rulebookGuides.AbsenceRulebook)
+
+  if playerColor and type(playerColor) == "string" then
+    if updatedCount > 0 then
+      broadcastToColor("Rulebooks refreshed: " .. tostring(updatedCount) .. " object(s).", playerColor, { 0.8, 1, 0.8 })
+    else
+      broadcastToColor("No tagged rulebook objects found yet.", playerColor, { 1, 0.85, 0.55 })
+    end
+  end
+end
+
+function applyRulebookGuide(tagName, guide)
+  if not guide then return 0 end
+
+  local tagged = getObjectsWithTag(tagName) or {}
+  local count = 0
+  for _, obj in ipairs(tagged) do
+    if obj and not obj.isDestroyed() then
+      obj.setName(guide.title or tagName)
+      obj.setDescription(guide.body or "")
+      renderRulebookText(obj, guide)
+      count = count + 1
+    end
+  end
+  return count
+end
+
+function renderRulebookText(obj, guide)
+  if not obj or obj.isDestroyed() then return end
+
+  local lines = {}
+  for line in string.gmatch(tostring(guide.body or ""), "[^\r\n]+") do
+    if trim(line) ~= "" then
+      table.insert(lines, line)
+    end
+  end
+
+  local preview = {}
+  for i = 1, math.min(#lines, 16) do
+    table.insert(preview, lines[i])
+  end
+
+  local displayText = (guide.title or "Rulebook") .. "\n\n" .. table.concat(preview, "\n")
+
+  local width = 3000
+  local height = 1800
+  local fontSize = 120
+
+  local okBounds, bounds = pcall(function()
+    return obj.getBoundsNormalized()
+  end)
+  if okBounds and bounds and bounds.size then
+    local sizeX = tonumber(bounds.size.x) or 4
+    local sizeZ = tonumber(bounds.size.z) or 3
+    width = math.max(2200, math.floor(sizeX * 480))
+    height = math.max(1200, math.floor(sizeZ * 420))
+    fontSize = math.max(72, math.floor(math.min(width, height) / 18))
+  end
+
+  pcall(function()
+    obj.clearButtons()
+  end)
+
+  obj.createButton({
+    label = displayText,
+    click_function = "onRulebookTextNoop",
+    function_owner = self,
+    position = { 0, 0.32, 0 },
+    rotation = { 0, 180, 0 },
+    width = width,
+    height = height,
+    font_size = fontSize,
+    color = { 0.08, 0.08, 0.08, 0.92 },
+    font_color = { 0.95, 0.95, 0.95 },
+    tooltip = guide.title or "Rulebook",
+  })
+end
+
+function onRulebookTextNoop(obj, playerColor, altClick)
+end
+
+function applyDeckbuilderRoleMode()
+  if not uiState.deckbuilderVisible then return end
+
+  local role = uiState.currentDeckbuilderRole
+  local titleText = "Severance Deckbuilder"
+  local roleHint = "Choose a deckbuilder object to enter Presence/Absence mode."
+
+  if role == "presence" then
+    titleText = "Presence Deckbuilder"
+    roleHint = "Presence mode active: build using Presence flow."
+  elseif role == "absence" then
+    titleText = "Absence Deckbuilder"
+    roleHint = "Absence mode active: build using Absence flow."
+  end
+
+  pcall(function()
+    UI.setAttribute("panelTitle", "text", titleText)
+  end)
+  pcall(function()
+    UI.setAttribute("roleHint", "text", roleHint)
+  end)
+  pcall(function()
+    UI.setAttribute("btnPresence", "active", role ~= "absence" and "true" or "false")
+  end)
+  pcall(function()
+    UI.setAttribute("btnAbsence", "active", role ~= "presence" and "true" or "false")
+  end)
+end
+
+function objectHasTag(obj, tagName)
+  if not obj or obj.isDestroyed() then return false end
+  local ok, result = pcall(function()
+    return obj.hasTag(tagName)
+  end)
+  return ok and result == true
+end
+
+function onSave()
+  return JSON.encode({
+    cards = state.cards,
+    lastFetch = state.lastFetch,
+    deckbuild = state.deckbuild,
+    roundValue = state.roundValue,
+    statusText = state.statusText,
+    taxonSettings = state.taxonSettings,
+  })
+end
+
+function createButtons()
+  local buttons = {
+    { label = "Build Presence Deck", click = "onBuildPresence" },
+    { label = "Build Absence Deck", click = "onBuildAbsence" },
+    { label = "Import Decklist", click = "onImportDecklist" },
+    { label = "Search Cards", click = "onSearchCards" },
+    { label = "Pick Search ID", click = "onPickSearchId" },
+    { label = "Add Search ID Manually", click = "onAddSearchIdManual" },
+    { label = "Skip Step", click = "onSkipStep" },
+    { label = "Reroll Step", click = "onRerollStep" },
+    { label = "Refresh Cache", click = "onRefreshCards" },
+    { label = "Finalize Deck", click = "onFinalizeDeck" },
+  }
+
+  local x = -35
+  local y = 0.2
+  local z = 20
+  local width = 900
+  local height = 200
+
+  for i, btn in ipairs(buttons) do
+    self.createButton({
+      label = btn.label,
+      click_function = btn.click,
+      function_owner = self,
+      position = { x, y, z - (i - 1) * 2.2 },
+      width = width,
+      height = height,
+      font_size = 120,
+      color = { 0.18, 0.18, 0.18 },
+      font_color = { 1, 1, 1 },
+    })
+  end
+end
+
+function onBuildPresence(arg1, arg2)
+  local playerColor = resolvePlayerColor(arg1, arg2)
+  ensureCards(function()
+    startDeckbuild("presence", playerColor)
+  end)
+end
+
+function onBuildAbsence(arg1, arg2)
+  local playerColor = resolvePlayerColor(arg1, arg2)
+  ensureCards(function()
+    startDeckbuild("absence", playerColor)
+  end)
+end
+
+function onImportDecklist(arg1, arg2)
+  local playerColor = resolvePlayerColor(arg1, arg2)
+  local raw = UI.getAttribute("importInput", "text") or ""
+  local ids = parseLines(raw)
+  if #ids == 0 then
+    broadcastToColor("Import decklist: paste one id per line.", playerColor, { 1, 1, 1 })
+    return
+  end
+
+  ensureCards(function()
+    local resolvedCards, missing = resolveDecklist(ids)
+    local msg = string.format("Import decklist: %d found, %d missing.", #resolvedCards, #missing)
+    broadcastToColor(msg, playerColor, { 1, 1, 1 })
+    if #missing > 0 then
+      broadcastToColor("Missing: " .. table.concat(missing, ", "), playerColor, { 1, 0.8, 0.4 })
+    end
+
+    if #resolvedCards > 0 then
+      local role = state.deckbuild and state.deckbuild.role or "absence"
+      spawnRoleDeck(role, resolvedCards, playerColor, "Imported Deck")
+    end
+  end)
+end
+
+function onSearchCards(arg1, arg2)
+  local playerColor = resolvePlayerColor(arg1, arg2)
+  local query = (UI.getAttribute("searchInput", "text") or "")
+  query = string.lower(query)
+  if query == "" then
+    broadcastToColor("Search cards: enter a query.", playerColor, { 1, 1, 1 })
+    return
+  end
+
+  ensureCards(function()
+    local completeResults = {}
+    local incompleteResults = {}
+    for _, card in ipairs(state.cards) do
+      local name = string.lower(card.display_name or "")
+      local id = string.lower(card.id or "")
+      if string.find(name, query, 1, true) or string.find(id, query, 1, true) then
+        if isDrawEligibleCard(card) then
+          if #completeResults < 10 then
+            table.insert(completeResults, card)
+          end
+        else
+          if #incompleteResults < 10 then
+            table.insert(incompleteResults, card)
+          end
+        end
+      end
+    end
+
+    if #completeResults == 0 and #incompleteResults == 0 then
+      broadcastToColor("Search cards: no results.", playerColor, { 1, 1, 1 })
+      return
+    end
+
+    if #completeResults > 0 then
+      broadcastToColor("Search cards: draw-eligible", playerColor, { 0.7, 1, 0.7 })
+    end
+    for _, card in ipairs(completeResults) do
+      broadcastToColor(string.format("- %s (%s)", card.display_name or "", card.id or ""), playerColor, { 0.8, 0.8, 0.8 })
+    end
+
+    if #incompleteResults > 0 then
+      broadcastToColor("Search cards: incomplete/manual-only", playerColor, { 1, 0.85, 0.55 })
+    end
+    for _, card in ipairs(incompleteResults) do
+      broadcastToColor(string.format("- %s (%s) [%s]", card.display_name or "", card.id or "", card.completion_status or "unknown"), playerColor, { 1, 0.8, 0.6 })
+    end
+  end)
+end
+
+function onPickSearchId(arg1, arg2)
+  local playerColor = resolvePlayerColor(arg1, arg2)
+  local id = UI.getAttribute("searchInput", "text") or ""
+  id = trim(id)
+  if id == "" then
+    broadcastToColor("Pick Search ID: enter a card id in Search Cards input.", playerColor, { 1, 1, 1 })
+    return
+  end
+
+  if not state.deckbuild then
+    broadcastToColor("No active deckbuild. Start Presence/Absence deckbuilding first.", playerColor, { 1, 0.8, 0.4 })
+    return
+  end
+
+  local ok = pickDeckbuildCard(id, playerColor)
+  if not ok then
+    broadcastToColor("Card id not in current draft options: " .. id, playerColor, { 1, 0.6, 0.4 })
+  end
+end
+
+function onRefreshCards(arg1, arg2)
+  local playerColor = resolvePlayerColor(arg1, arg2)
+  fetchCards(function()
+    local count = #state.cards
+    local text = string.format("Card cache refreshed: %d cards", count)
+    broadcastToColor(text, playerColor, { 0.7, 1, 0.7 })
+    updateStatusUi(text)
+  end)
+end
+
+function onAddSearchIdManual(arg1, arg2)
+  local playerColor = resolvePlayerColor(arg1, arg2)
+  local id = trim(UI.getAttribute("searchInput", "text") or "")
+  if id == "" then
+    broadcastToColor("Add Search ID Manually: enter a card id in Search Cards input.", playerColor, { 1, 1, 1 })
+    return
+  end
+
+  ensureCards(function()
+    local card = findCardById(id)
+    if not card then
+      broadcastToColor("Card not found: " .. id, playerColor, { 1, 0.5, 0.5 })
+      return
+    end
+
+    local role = state.deckbuild and state.deckbuild.role or "absence"
+    spawnManualCard(role, card, playerColor)
+  end)
+end
+
+function onSkipStep(arg1, arg2)
+  local playerColor = resolvePlayerColor(arg1, arg2)
+  if not state.deckbuild then
+    broadcastToColor("No active deckbuild. Start Presence/Absence deckbuilding first.", playerColor, { 1, 0.8, 0.4 })
+    return
+  end
+  broadcastToColor("Step skipped.", playerColor, { 1, 1, 1 })
+  advanceDeckbuildStep(playerColor)
+end
+
+function onRerollStep(arg1, arg2)
+  local playerColor = resolvePlayerColor(arg1, arg2)
+  if not state.deckbuild then
+    broadcastToColor("No active deckbuild. Start Presence/Absence deckbuilding first.", playerColor, { 1, 0.8, 0.4 })
+    return
+  end
+  broadcastToColor("Step rerolled.", playerColor, { 1, 1, 1 })
+  prepareCurrentStepOptions(playerColor)
+end
+
+function onFinalizeDeck(arg1, arg2)
+  local playerColor = resolvePlayerColor(arg1, arg2)
+  if not state.deckbuild or not state.deckbuild.pickedCards then
+    broadcastToColor("No active deckbuild to finalize.", playerColor, { 1, 0.8, 0.4 })
+    return
+  end
+
+  if #state.deckbuild.pickedCards == 0 then
+    broadcastToColor("No cards have been picked yet.", playerColor, { 1, 0.8, 0.4 })
+    return
+  end
+
+  spawnRoleDeck(state.deckbuild.role, state.deckbuild.pickedCards, playerColor, "Draft Deck")
+end
+
+function startDeckbuild(role, playerColor)
+  local order = getTaxonOrder(role)
+  state.deckbuild = {
+    role = role,
+    stepIndex = 1,
+    order = order,
+    picksThisStep = 0,
+    pickedIds = {},
+    pickedCards = {},
+    currentOptions = {},
+  }
+
+  local label = role == "presence" and "Presence" or "Absence"
+  broadcastToColor(label .. " deckbuilder started.", playerColor, { 1, 1, 1 })
+  prepareCurrentStepOptions(playerColor)
+end
+
+function getTaxonOrder(role)
+  local ranks = { "Bin", "Basin", "Eco", "Kingdom", "Phylum", "Class", "Order", "Family", "Essa" }
+  if role == "absence" then
+    local reversed = {}
+    for i = #ranks, 1, -1 do
+      table.insert(reversed, ranks[i])
+    end
+    return reversed
+  end
+  return ranks
+end
+
+function ensureCards(onReady)
+  if isCacheFresh() and #state.cards > 0 then
+    onReady()
+    return
+  end
+
+  fetchCards(onReady)
+end
+
+function isCacheFresh()
+  if state.lastFetch == 0 then return false end
+  return os.time() - state.lastFetch <= config.cacheTtlSeconds
+end
+
+function fetchCards(onReady)
+  local url = config.apiBaseUrl .. "/api/cards?status=" .. config.defaultStatus
+  WebRequest.get(url, function(request)
+    if request.is_error then
+      broadcastToAll("Card fetch failed: " .. request.error, { 1, 0.4, 0.4 })
+      return
+    end
+
+    local ok, payload = pcall(JSON.decode, request.text)
+    if not ok or not payload or not payload.cards then
+      broadcastToAll("Card fetch failed: invalid response", { 1, 0.4, 0.4 })
+      return
+    end
+
+    state.cards = payload.cards
+    state.lastFetch = os.time()
+    updateStatusUi(string.format("Cards loaded: %d", #state.cards))
+    onReady()
+  end)
+end
+
+function getCardImageUrl(card)
+  if config.imagePathMode == "path" and card.image_path then
+    return card.image_path
+  end
+  if card.image_path and string.match(card.image_path, "^https?://") then
+    return card.image_path
+  end
+  if config.imageBaseUrl ~= "" then
+    return config.imageBaseUrl .. "/" .. card.id .. ".png"
+  end
+  return nil
+end
+
+function parseLines(raw)
+  local lines = {}
+  for line in string.gmatch(raw or "", "[^\r\n]+") do
+    local trimmed = string.gsub(line, "^%s+", "")
+    trimmed = string.gsub(trimmed, "%s+$", "")
+    if trimmed ~= "" then
+      table.insert(lines, trimmed)
+    end
+  end
+  return lines
+end
+
+function indexCardsById(cards)
+  local index = {}
+  for _, card in ipairs(cards or {}) do
+    if card.id then
+      index[card.id] = card
+    end
+  end
+  return index
+end
+
+function resolvePlayerColor(arg1, arg2)
+  if type(arg1) == "string" then
+    return arg1
+  end
+  if type(arg2) == "string" then
+    return arg2
+  end
+  if type(arg1) == "table" and arg1.color then
+    return arg1.color
+  end
+  return "White"
+end
+
+function trim(value)
+  local s = tostring(value or "")
+  s = string.gsub(s, "^%s+", "")
+  s = string.gsub(s, "%s+$", "")
+  return s
+end
+
+function getCurrentRank()
+  if not state.deckbuild then return nil end
+  return state.deckbuild.order[state.deckbuild.stepIndex]
+end
+
+function prepareCurrentStepOptions(playerColor)
+  if not state.deckbuild then return end
+
+  local rank = getCurrentRank()
+  if not rank then
+    broadcastToColor("All taxon steps complete. Finalize deck when ready.", playerColor, { 0.7, 1, 0.7 })
+    updateStatusUi("Deckbuild complete. Finalize deck.")
+    return
+  end
+
+  local pool = {}
+  for _, card in ipairs(state.cards) do
+    if equalsIgnoreCase(card.taxonomy_rank, rank)
+      and not state.deckbuild.pickedIds[card.id]
+      and isDrawEligibleCard(card)
+    then
+      table.insert(pool, card)
+    end
+  end
+
+  state.deckbuild.currentOptions = sampleCards(pool, config.optionCountPerStep)
+  state.deckbuild.picksThisStep = 0
+
+  local header = string.format("Draft Step %d/%d - %s", state.deckbuild.stepIndex, #state.deckbuild.order, rank)
+  broadcastToColor(header, playerColor, { 0.8, 0.9, 1 })
+
+  if #state.deckbuild.currentOptions == 0 then
+    broadcastToColor("No available cards in this rank. Advancing.", playerColor, { 1, 0.8, 0.4 })
+    advanceDeckbuildStep(playerColor)
+    return
+  end
+
+  for _, card in ipairs(state.deckbuild.currentOptions) do
+    broadcastToColor(string.format("- %s (%s)", card.display_name or "", card.id or ""), playerColor, { 0.8, 0.8, 0.8 })
+  end
+  broadcastToColor("Pick by typing card id into Search Cards input and clicking Pick Search ID.", playerColor, { 1, 1, 1 })
+  updateStatusUi(header)
+end
+
+function pickDeckbuildCard(cardId, playerColor)
+  if not state.deckbuild then return false end
+
+  local chosen = nil
+  for _, card in ipairs(state.deckbuild.currentOptions or {}) do
+    if equalsIgnoreCase(card.id, cardId) then
+      chosen = card
+      break
+    end
+  end
+  if not chosen then return false end
+
+  state.deckbuild.pickedIds[chosen.id] = true
+  table.insert(state.deckbuild.pickedCards, chosen)
+  state.deckbuild.picksThisStep = (state.deckbuild.picksThisStep or 0) + 1
+
+  broadcastToColor("Picked: " .. (chosen.display_name or chosen.id), playerColor, { 0.7, 1, 0.7 })
+
+  if state.deckbuild.picksThisStep >= config.picksPerStep then
+    advanceDeckbuildStep(playerColor)
+    return true
+  end
+
+  local remaining = {}
+  for _, card in ipairs(state.deckbuild.currentOptions) do
+    if not state.deckbuild.pickedIds[card.id] then
+      table.insert(remaining, card)
+    end
+  end
+  state.deckbuild.currentOptions = remaining
+
+  if #state.deckbuild.currentOptions == 0 then
+    advanceDeckbuildStep(playerColor)
+    return true
+  end
+
+  broadcastToColor("Remaining options this step:", playerColor, { 1, 1, 1 })
+  for _, card in ipairs(state.deckbuild.currentOptions) do
+    broadcastToColor(string.format("- %s (%s)", card.display_name or "", card.id or ""), playerColor, { 0.8, 0.8, 0.8 })
+  end
+  return true
+end
+
+function advanceDeckbuildStep(playerColor)
+  if not state.deckbuild then return end
+  state.deckbuild.stepIndex = state.deckbuild.stepIndex + 1
+  prepareCurrentStepOptions(playerColor)
+end
+
+function resolveDecklist(ids)
+  local cardIndex = indexCardsById(state.cards)
+  local resolved = {}
+  local missing = {}
+  for _, id in ipairs(ids) do
+    local found = cardIndex[id]
+    if found then
+      table.insert(resolved, found)
+    else
+      table.insert(missing, id)
+    end
+  end
+  return resolved, missing
+end
+
+function spawnRoleDeck(role, cards, playerColor, deckName)
+  local roleKey = role == "presence" and "presence" or "absence"
+  local spawnTransform = resolveDeckSpawnTransform(roleKey)
+
+  local ttsCards = {}
+  for _, card in ipairs(cards) do
+    local faceUrl = getCardImageUrl(card)
+    if faceUrl then
+      table.insert(ttsCards, {
+        id = card.id,
+        name = card.display_name or card.id,
+        description = buildCardHoverDescription(card),
+        faceUrl = faceUrl,
+      })
+    end
+  end
+
+  if #ttsCards == 0 then
+    broadcastToColor("No spawnable cards found (missing image URLs).", playerColor, { 1, 0.5, 0.5 })
+    return
+  end
+
+  local deckJson = buildDeckJson(ttsCards, deckName or "Severance Deck")
+  spawnObjectJSON({
+    json = JSON.encode(deckJson),
+    position = spawnTransform.position,
+    rotation = spawnTransform.rotation,
+    callback_function = function(obj)
+      obj.setName((deckName or "Deck") .. " - " .. capitalize(roleKey))
+    end,
+  })
+
+  broadcastToColor(string.format("Spawned %d-card %s deck.", #ttsCards, roleKey), playerColor, { 0.7, 1, 0.7 })
+  updateStatusUi(string.format("Last deck spawn: %s (%d cards)", roleKey, #ttsCards))
+end
+
+function buildDeckJson(cards, deckName)
+  local customDeck = {}
+  local contained = {}
+  local deckIds = {}
+  local deckIndex = 1
+
+  for i, card in ipairs(cards) do
+    local customId = 100 + i
+    local cardId = customId * 100
+
+    customDeck[tostring(customId)] = {
+      FaceURL = card.faceUrl,
+      BackURL = config.defaultCardBackUrl,
+      NumWidth = 1,
+      NumHeight = 1,
+      BackIsHidden = true,
+      UniqueBack = false,
+      Type = 0,
+    }
+
+    table.insert(contained, {
+      Name = "CardCustom",
+      Transform = {
+        posX = 0,
+        posY = 0,
+        posZ = 0,
+        rotX = 0,
+        rotY = 180,
+        rotZ = 180,
+        scaleX = 1,
+        scaleY = 1,
+        scaleZ = 1,
+      },
+      Nickname = card.name,
+      Description = card.description,
+      CardID = cardId,
+      CustomDeck = customDeck,
+      LuaScript = "",
+      LuaScriptState = "",
+      XmlUI = "",
+    })
+
+    table.insert(deckIds, cardId)
+  end
+
+  return {
+    Name = "DeckCustom",
+    Transform = {
+      posX = 0,
+      posY = 1,
+      posZ = 0,
+      rotX = 0,
+      rotY = 180,
+      rotZ = 180,
+      scaleX = 1,
+      scaleY = 1,
+      scaleZ = 1,
+    },
+    Nickname = deckName or "Severance Deck",
+    Description = "",
+    DeckIDs = deckIds,
+    CustomDeck = customDeck,
+    ContainedObjects = contained,
+    LuaScript = "",
+    LuaScriptState = "",
+    XmlUI = "",
+    GUID = "",
+  }
+end
+
+function spawnManualCard(role, card, playerColor)
+  local roleKey = role == "presence" and "presence" or "absence"
+  local spawnTransform = resolveDeckSpawnTransform(roleKey)
+  local faceUrl = getCardImageUrl(card)
+  if not faceUrl then
+    broadcastToColor("Unable to resolve card image/fallback for: " .. (card.id or "unknown"), playerColor, { 1, 0.5, 0.5 })
+    return
+  end
+
+  local customId = 1001
+  local cardId = customId * 100
+  local cardJson = {
+    Name = "CardCustom",
+    Transform = {
+      posX = 0,
+      posY = 1,
+      posZ = 0,
+      rotX = 0,
+      rotY = 180,
+      rotZ = 180,
+      scaleX = 1,
+      scaleY = 1,
+      scaleZ = 1,
+    },
+    Nickname = (card.display_name or card.id or "Card") .. " [Manual]",
+    Description = buildCardHoverDescription(card),
+    CardID = cardId,
+    CustomDeck = {
+      [tostring(customId)] = {
+        FaceURL = faceUrl,
+        BackURL = config.defaultCardBackUrl,
+        NumWidth = 1,
+        NumHeight = 1,
+        BackIsHidden = true,
+        UniqueBack = false,
+        Type = 0,
+      }
+    },
+    LuaScript = "",
+    LuaScriptState = "",
+    XmlUI = "",
+    GUID = "",
+  }
+
+  spawnObjectJSON({
+    json = JSON.encode(cardJson),
+    position = {
+      spawnTransform.position[1] + 2.2,
+      spawnTransform.position[2],
+      spawnTransform.position[3],
+    },
+    rotation = spawnTransform.rotation,
+  })
+
+  local status = card.completion_status or "unknown"
+  broadcastToColor(string.format("Manual add: %s (%s)", card.display_name or card.id or "Card", status), playerColor, { 0.75, 0.95, 1 })
+end
+
+function resolveDeckSpawnTransform(roleKey)
+  local fallback = {
+    position = roleZones[roleKey].deck,
+    rotation = roleZones[roleKey].rotation,
+  }
+
+  local targetTag = roleKey == "presence" and tags.presenceDeck or tags.absenceDeck
+  local tagged = getObjectsWithTag(targetTag) or {}
+  local target = tagged[1]
+
+  if not target or target.isDestroyed() then
+    return fallback
+  end
+
+  local okPos, worldPos = pcall(function()
+    return target.getPosition()
+  end)
+  if not okPos or not worldPos then
+    return fallback
+  end
+
+  local spawnY = worldPos.y + 1.2
+  local okBounds, bounds = pcall(function()
+    return target.getBoundsNormalized()
+  end)
+  if okBounds and bounds and bounds.size and bounds.size.y then
+    spawnY = worldPos.y + (tonumber(bounds.size.y) or 0) / 2 + 1.2
+  end
+
+  local rotation = fallback.rotation
+  local okRot, worldRot = pcall(function()
+    return target.getRotation()
+  end)
+  if okRot and worldRot then
+    rotation = { worldRot.x or fallback.rotation[1], worldRot.y or fallback.rotation[2], worldRot.z or fallback.rotation[3] }
+  end
+
+  return {
+    position = { worldPos.x, spawnY, worldPos.z },
+    rotation = rotation,
+  }
+end
+
+function ensureZoneMarkers()
+  if zoneRefs.presenceDeck == nil then
+    zoneRefs.presenceDeck = spawnZoneMarker("Presence Deck Zone", roleZones.presence.deck, { 0.45, 0.1, 0.1 })
+  end
+  if zoneRefs.presenceDiscard == nil then
+    zoneRefs.presenceDiscard = spawnZoneMarker("Presence Discard Zone", roleZones.presence.discard, { 0.35, 0.1, 0.1 })
+  end
+  if zoneRefs.absenceDeck == nil then
+    zoneRefs.absenceDeck = spawnZoneMarker("Absence Deck Zone", roleZones.absence.deck, { 0.1, 0.1, 0.45 })
+  end
+  if zoneRefs.absenceDiscard == nil then
+    zoneRefs.absenceDiscard = spawnZoneMarker("Absence Discard Zone", roleZones.absence.discard, { 0.1, 0.1, 0.35 })
+  end
+end
+
+function createRoundTrackerButtons()
+  self.createButton({
+    label = "R-",
+    click_function = "onRoundPrev",
+    function_owner = self,
+    position = { -2.2, 0.2, 4.8 },
+    width = 320,
+    height = 200,
+    font_size = 110,
+    color = { 0.2, 0.2, 0.2 },
+    font_color = { 1, 1, 1 },
+  })
+
+  self.createButton({
+    label = "R:1",
+    click_function = "onRoundReset",
+    function_owner = self,
+    position = { 0, 0.2, 4.8 },
+    width = 520,
+    height = 200,
+    font_size = 110,
+    color = { 0.12, 0.12, 0.12 },
+    font_color = { 0.8, 1, 0.8 },
+  })
+
+  local okButtons, buttons = pcall(function()
+    return self.getButtons()
+  end)
+  if okButtons and buttons and #buttons > 0 then
+    uiRefs.roundLabelButtonIndex = #buttons - 1
+  else
+    uiRefs.roundLabelButtonIndex = nil
+  end
+
+  self.createButton({
+    label = "R+",
+    click_function = "onRoundNext",
+    function_owner = self,
+    position = { 2.2, 0.2, 4.8 },
+    width = 320,
+    height = 200,
+    font_size = 110,
+    color = { 0.2, 0.2, 0.2 },
+    font_color = { 1, 1, 1 },
+  })
+end
+
+function onRoundPrev(arg1, arg2)
+  local playerColor = resolvePlayerColor(arg1, arg2)
+  state.roundValue = math.max(1, (state.roundValue or 1) - 1)
+  updateRoundTrackerUi()
+  broadcastToColor("Round set to " .. tostring(state.roundValue), playerColor, { 0.8, 1, 0.8 })
+end
+
+function onRoundNext(arg1, arg2)
+  local playerColor = resolvePlayerColor(arg1, arg2)
+  state.roundValue = math.min(99, (state.roundValue or 1) + 1)
+  updateRoundTrackerUi()
+  broadcastToColor("Round set to " .. tostring(state.roundValue), playerColor, { 0.8, 1, 0.8 })
+end
+
+function onRoundReset(arg1, arg2)
+  local playerColor = resolvePlayerColor(arg1, arg2)
+  state.roundValue = 1
+  updateRoundTrackerUi()
+  broadcastToColor("Round tracker reset to 1", playerColor, { 0.8, 1, 0.8 })
+end
+
+function spawnZoneMarker(label, position, color)
+  local guid = nil
+  spawnObject({
+    type = "BlockSquare",
+    position = { position[1], 1.02, position[3] },
+    scale = { 2.2, 0.1, 3.2 },
+    sound = false,
+    callback_function = function(obj)
+      obj.setName(label)
+      obj.setColorTint(color)
+      obj.setLock(true)
+      guid = obj.getGUID()
+    end,
+  })
+  return guid
+end
+
+function equalsIgnoreCase(a, b)
+  return string.lower(tostring(a or "")) == string.lower(tostring(b or ""))
+end
+
+function findCardById(id)
+  local target = string.lower(trim(id))
+  for _, card in ipairs(state.cards or {}) do
+    if string.lower(card.id or "") == target then
+      return card
+    end
+  end
+  return nil
+end
+
+function isDrawEligibleCard(card)
+  local status = string.lower(card and card.completion_status or "")
+  return config.drawEligibleStatuses[status] == true
+end
+
+function buildCardHoverDescription(card)
+  local status = card.completion_status or "unknown"
+  local isIncomplete = not isDrawEligibleCard(card)
+  local prefix = isIncomplete and "[INCOMPLETE / MANUAL-ONLY]" or "[DRAW-ELIGIBLE]"
+  local description = card.description or ""
+  local payload = JSON.encode(card) or "{}"
+  return table.concat({
+    prefix,
+    "Status: " .. status,
+    "",
+    "Card Text:",
+    description,
+    "",
+    "Backend Data:",
+    payload,
+  }, "\n")
+end
+
+function sampleCards(source, count)
+  local copy = {}
+  for _, card in ipairs(source or {}) do
+    table.insert(copy, card)
+  end
+
+  local result = {}
+  for i = 1, count do
+    if #copy == 0 then break end
+    local idx = math.random(1, #copy)
+    table.insert(result, copy[idx])
+    table.remove(copy, idx)
+  end
+  return result
+end
+
+function capitalize(value)
+  local text = tostring(value or "")
+  if text == "" then return text end
+  return string.upper(string.sub(text, 1, 1)) .. string.sub(text, 2)
+end
+
+function updateStatusUi(text)
+  state.statusText = text or state.statusText or ""
+  if UI then
+    if uiState.deckbuilderVisible then
+      UI.setAttribute("statusText", "text", state.statusText)
+    end
+  end
+end
+
+function updateRoundTrackerUi()
+  if uiRefs.roundLabelButtonIndex ~= nil then
+    self.editButton({
+      index = uiRefs.roundLabelButtonIndex,
+      label = "R:" .. tostring(state.roundValue or 1),
+    })
+  end
+end

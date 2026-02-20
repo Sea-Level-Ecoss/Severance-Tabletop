@@ -1,0 +1,2 @@
+-- UI logic is handled by Global.lua.
+-- This file is optional and can be removed once UI flow is finalized.

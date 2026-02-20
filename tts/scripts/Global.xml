@@ -1,0 +1,2 @@
+-- ui.xml is loaded via Global.lua using self.getVar("uiXml").
+-- This file is optional and can be removed once TTS save embeds the UI XML.

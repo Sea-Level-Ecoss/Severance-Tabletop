@@ -1,0 +1,34 @@
+<Panel id="root" width="980" height="760" position="0 0 -300" allowDragging="true" color="#0E111BEA" active="false">
+  <Panel id="header" height="64" width="960" offsetXY="0 -6" color="#151B2ACC">
+    <Text id="panelTitle" text="Severance Deckbuilder" fontSize="34" color="#EAF0FF" alignment="UpperCenter" />
+    <Button id="btnClose" onClick="onCloseDeckbuilderUi" text="X" width="44" height="44" offsetXY="450 0" fontSize="28" color="#6F1D1BCC" textColor="#FFFFFFFF" />
+  </Panel>
+
+  <VerticalLayout childForceExpandHeight="false" spacing="10" padding="16 76 16 16">
+    <Text id="roleHint" text="Choose a deckbuilder object to enter Presence/Absence mode." fontSize="18" color="#C8D4F0" />
+
+    <HorizontalLayout childForceExpandWidth="true" spacing="10">
+      <Button id="btnPresence" onClick="onBuildPresence" text="Build Presence Deck" fontSize="20" color="#26354FCC" textColor="#FFFFFFFF" />
+      <Button id="btnAbsence" onClick="onBuildAbsence" text="Build Absence Deck" fontSize="20" color="#3B294FCC" textColor="#FFFFFFFF" />
+      <Button id="btnRefresh" onClick="onRefreshCards" text="Refresh Cache" fontSize="18" color="#264338CC" textColor="#FFFFFFFF" />
+    </HorizontalLayout>
+
+    <Text text="Import Decklist" fontSize="22" color="#D6DDF0" />
+    <InputField id="importInput" text="" fontSize="18" lineType="MultiLineNewline" height="120" colors="#FFFFFFFF|#FFFFFFFF|#FFFFFFFF|#FFFFFFFF" textColor="#0A0A0AFF" placeholder="#8A93A8FF" />
+    <Button id="btnImport" onClick="onImportDecklist" text="Import Decklist" fontSize="18" color="#2A3550CC" textColor="#FFFFFFFF" />
+
+    <Text text="Search Cards" fontSize="22" color="#D6DDF0" />
+    <InputField id="searchInput" text="" fontSize="18" height="46" colors="#FFFFFFFF|#FFFFFFFF|#FFFFFFFF|#FFFFFFFF" textColor="#0A0A0AFF" placeholder="#8A93A8FF" />
+
+    <GridLayout cellSize="300 44" spacing="10 8" constraint="FixedColumnCount" constraintCount="3" childForceExpandWidth="true" childForceExpandHeight="false">
+      <Button id="btnSearch" onClick="onSearchCards" text="Search Cards" fontSize="16" color="#243247CC" textColor="#FFFFFFFF" />
+      <Button id="btnPick" onClick="onPickSearchId" text="Pick Search ID" fontSize="16" color="#2A3A52CC" textColor="#FFFFFFFF" />
+      <Button id="btnAddManual" onClick="onAddSearchIdManual" text="Add Search ID Manually" fontSize="16" color="#324468CC" textColor="#FFFFFFFF" />
+      <Button id="btnSkipStep" onClick="onSkipStep" text="Skip Step" fontSize="16" color="#4D3C27CC" textColor="#FFFFFFFF" />
+      <Button id="btnRerollStep" onClick="onRerollStep" text="Reroll Step" fontSize="16" color="#3F324FCC" textColor="#FFFFFFFF" />
+      <Button id="btnFinalize" onClick="onFinalizeDeck" text="Finalize Deck (Spawn)" fontSize="16" color="#2A4D3ACC" textColor="#FFFFFFFF" />
+    </GridLayout>
+
+    <Text id="statusText" text="Status: Ready" fontSize="18" color="#9CE9B2" />
+  </VerticalLayout>
+</Panel>
