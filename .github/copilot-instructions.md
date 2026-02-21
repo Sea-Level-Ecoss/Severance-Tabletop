@@ -4,7 +4,7 @@
 
 Before any implementation task:
 
-1. Read `Sea Level Instructions.md` from the Sea Level workspace root.
+1. Read `Sea Level Instructions.md` from this repository root.
 2. Confirm machine context (`Laptop` or `Server Computer`).
 3. Follow `SERVER_LAPTOP_PR_WORKFLOW.md` for branch/PR flow.
 

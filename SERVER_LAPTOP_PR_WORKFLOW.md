@@ -48,4 +48,4 @@ git pull --ff-only origin main
 2. Start chat with:
 	- `read Sea Level Instructions`
 	- `Machine: Server Computer`
-	- `Read .github/copilot-instructions.md and SERVER_LAPTOP_PR_WORKFLOW.md, then confirm constraints before implementation.`
+	- `Read Sea Level Instructions.md, .github/copilot-instructions.md, and SERVER_LAPTOP_PR_WORKFLOW.md, then confirm constraints before implementation.`
