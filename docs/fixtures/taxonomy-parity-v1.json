@@ -1,0 +1,87 @@
+{
+  "version": "1.0.0",
+  "generated_at": "2026-03-07",
+  "rank_order": {
+    "presence": [
+      "bin",
+      "basin",
+      "eco",
+      "kingdom",
+      "phylum",
+      "class",
+      "order",
+      "family",
+      "essa"
+    ],
+    "absence": [
+      "essa",
+      "family",
+      "order",
+      "class",
+      "phylum",
+      "kingdom",
+      "eco",
+      "basin",
+      "bin"
+    ]
+  },
+  "vectors": [
+    {
+      "id": "presence_three_in_row",
+      "mode": "presence",
+      "resolved_taxa": {
+        "bin": "signal",
+        "basin": "harbor",
+        "eco": "smog",
+        "kingdom": "smog",
+        "phylum": "smog",
+        "class": "current",
+        "order": "proxy",
+        "family": "lens",
+        "essa": "1"
+      },
+      "expected": {
+        "three_in_a_row": true,
+        "two_sets_of_two": false
+      }
+    },
+    {
+      "id": "absence_two_sets_of_two",
+      "mode": "absence",
+      "resolved_taxa": {
+        "bin": "a",
+        "basin": "a",
+        "eco": "z",
+        "kingdom": "y",
+        "phylum": "x",
+        "class": "w",
+        "order": "b",
+        "family": "b",
+        "essa": "1"
+      },
+      "expected": {
+        "three_in_a_row": false,
+        "two_sets_of_two": true
+      }
+    },
+    {
+      "id": "no_combo_baseline",
+      "mode": "presence",
+      "resolved_taxa": {
+        "bin": "signal",
+        "basin": "harbor",
+        "eco": "pulse",
+        "kingdom": "gale",
+        "phylum": "scribe",
+        "class": "current",
+        "order": "proxy",
+        "family": "lens",
+        "essa": "1"
+      },
+      "expected": {
+        "three_in_a_row": false,
+        "two_sets_of_two": false
+      }
+    }
+  ]
+}

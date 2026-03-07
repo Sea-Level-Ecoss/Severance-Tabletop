@@ -114,7 +114,12 @@ local tags = {
   absenceEssa = "AbsenceEssa",
 }
 
-local taxonRanks = { "Bin", "Basin", "Eco", "Kingdom", "Phylum", "Class", "Order", "Family", "Essa" }
+local taxonomyOrderByRole = {
+  presence = { "Bin", "Basin", "Eco", "Kingdom", "Phylum", "Class", "Order", "Family", "Essa" },
+  absence = { "Essa", "Family", "Order", "Class", "Phylum", "Kingdom", "Eco", "Basin", "Bin" },
+}
+
+local taxonRanks = taxonomyOrderByRole.presence
 
 local uiRefs = {
   roundLabelButtonIndex = nil,
@@ -506,7 +511,7 @@ function refreshTaxonCalculatorRole(roleKey)
 
   local settings = state.taxonSettings[roleKey] or { includeBinBasin = true }
   local rankValues = calculateTaxonValues(roleKey, settings.includeBinBasin)
-  local comboText = detectTaxonCombos(rankValues, settings.includeBinBasin)
+  local comboText = detectTaxonCombos(roleKey, rankValues, settings.includeBinBasin)
 
   for _, calcObj in ipairs(calculators) do
     if calcObj and not calcObj.isDestroyed() then
@@ -674,9 +679,10 @@ function pickMostFrequent(list)
   return bestValue
 end
 
-function detectTaxonCombos(rankValues, includeBinBasin)
+function detectTaxonCombos(roleKey, rankValues, includeBinBasin)
+  local order = getTaxonOrder(roleKey)
   local chain = {}
-  for _, rank in ipairs(taxonRanks) do
+  for _, rank in ipairs(order) do
     if includeBinBasin or (rank ~= "Bin" and rank ~= "Basin") then
       local v = trim(rankValues[rank] or "")
       table.insert(chain, { rank = rank, value = v })
@@ -727,7 +733,7 @@ function renderTaxonCalculator(calcObj, roleKey, rankValues, comboText, includeB
   table.insert(lines, roleLabel .. " Taxon Calculator")
   table.insert(lines, "")
 
-  for _, rank in ipairs(taxonRanks) do
+  for _, rank in ipairs(getTaxonOrder(roleKey)) do
     if includeBinBasin or (rank ~= "Bin" and rank ~= "Basin") then
       table.insert(lines, rank .. ": " .. tostring(rankValues[rank] or "X"))
     end
@@ -1133,15 +1139,10 @@ function startDeckbuild(role, playerColor)
 end
 
 function getTaxonOrder(role)
-  local ranks = { "Bin", "Basin", "Eco", "Kingdom", "Phylum", "Class", "Order", "Family", "Essa" }
   if role == "absence" then
-    local reversed = {}
-    for i = #ranks, 1, -1 do
-      table.insert(reversed, ranks[i])
-    end
-    return reversed
+    return taxonomyOrderByRole.absence
   end
-  return ranks
+  return taxonomyOrderByRole.presence
 end
 
 function ensureCards(onReady)

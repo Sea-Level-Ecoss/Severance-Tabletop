@@ -86,3 +86,23 @@ Micro -> Macro (Absence):
 
 - Add new combo detectors in the calculator combo evaluation layer without changing rank parsing.
 - Keep combo output as a list so new combo types can be appended safely.
+
+## Taxonomy Parity Fixtures (v1)
+
+- Canonical fixture file: `docs/fixtures/taxonomy-parity-v1.json`
+- Required parity vectors:
+  - `presence_three_in_row`
+  - `absence_two_sets_of_two`
+  - `no_combo_baseline`
+
+Expected process:
+1. Load fixture vector by `id`.
+2. Resolve displayed taxon chain for the mode (`presence` or `absence`).
+3. Evaluate combo detectors.
+4. Assert output matches `expected.three_in_a_row` and `expected.two_sets_of_two`.
+
+Runnable check:
+- `node tools/taxonomy-parity-check.js`
+
+Contract rule:
+- Any change to taxonomy rank ordering or combo semantics must update this fixture file first, then update the TTS implementation.
