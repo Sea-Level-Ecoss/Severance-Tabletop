@@ -13,6 +13,15 @@
       <Button id="btnRefresh" onClick="onRefreshCards" text="Refresh Cache" fontSize="18" color="#264338CC" textColor="#FFFFFFFF" />
     </HorizontalLayout>
 
+    <GridLayout cellSize="300 44" spacing="10 8" constraint="FixedColumnCount" constraintCount="3" childForceExpandWidth="true" childForceExpandHeight="false">
+      <Button id="btnStartDeckbuildMode" onClick="onStartDeckbuildMode" text="Start Deckbuild Mode" fontSize="16" color="#2F415ECC" textColor="#FFFFFFFF" />
+      <Button id="btnReturnBaseMode" onClick="onReturnToBaseMode" text="Return to Base Mode" fontSize="16" color="#4A3B27CC" textColor="#FFFFFFFF" />
+      <Button id="btnSelectEssa" onClick="onSelectEssa" text="Select Essa (from Search ID)" fontSize="16" color="#28465ACC" textColor="#FFFFFFFF" />
+      <Button id="btnResolveHands" onClick="onResolveStartingHands" text="Resolve Starting Hands" fontSize="16" color="#2B4B38CC" textColor="#FFFFFFFF" />
+      <Button id="btnResolveFirstPlayer" onClick="onResolveFirstPlayer" text="Resolve First Player" fontSize="16" color="#364D2FCC" textColor="#FFFFFFFF" />
+      <Text text="Host-only setup transitions" fontSize="16" color="#A9B6D6" alignment="MiddleCenter" />
+    </GridLayout>
+
     <Text text="Import Decklist" fontSize="22" color="#D6DDF0" />
     <InputField id="importInput" text="" fontSize="18" lineType="MultiLineNewline" height="120" colors="#FFFFFFFF|#FFFFFFFF|#FFFFFFFF|#FFFFFFFF" textColor="#0A0A0AFF" placeholder="#8A93A8FF" />
     <Button id="btnImport" onClick="onImportDecklist" text="Import Decklist" fontSize="18" color="#2A3550CC" textColor="#FFFFFFFF" />

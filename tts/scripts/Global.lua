@@ -11,6 +11,9 @@ local config = {
   cacheTtlSeconds = 300,
   optionCountPerStep = 3,
   picksPerStep = 2,
+  baseDecisionBudget = 40,
+  maxDecisionBudget = 47,
+  maxSkips = 7,
   drawEligibleStatuses = {
     shippable = true,
     gameplay_ready = true,
@@ -86,12 +89,21 @@ local state = {
     presence = { includeBinBasin = true },
     absence = { includeBinBasin = true },
   },
+  setup = {
+    phase = "base",
+    byRole = {
+      presence = { playerColor = nil, mode = "base", essaId = nil, startingHandResolved = false },
+      absence = { playerColor = nil, mode = "base", essaId = nil, startingHandResolved = false },
+    },
+    firstPlayer = nil,
+  },
 }
 
 local uiXml = nil
 local uiState = {
   deckbuilderVisible = false,
   currentDeckbuilderRole = nil,
+  lastPlayerColor = nil,
 }
 local zoneRefs = {
   presenceDeck = nil,
@@ -148,8 +160,11 @@ function onLoad(savedState)
       state.roundValue = decoded.roundValue or 1
       state.statusText = decoded.statusText or state.statusText
       state.taxonSettings = decoded.taxonSettings or state.taxonSettings
+      state.setup = decoded.setup or state.setup
     end
   end
+
+  ensureSetupDefaults()
 
   safeRun("resolve ui xml", function()
     if self and self.getVar then
@@ -201,6 +216,136 @@ function safeUiSetXml(xml)
     return false
   end
   return true
+end
+
+function ensureSetupDefaults()
+  state.setup = state.setup or {}
+  state.setup.phase = state.setup.phase or "base"
+  state.setup.byRole = state.setup.byRole or {}
+
+  state.setup.byRole.presence = state.setup.byRole.presence or {}
+  state.setup.byRole.presence.playerColor = state.setup.byRole.presence.playerColor
+  state.setup.byRole.presence.mode = state.setup.byRole.presence.mode or "base"
+  state.setup.byRole.presence.essaId = state.setup.byRole.presence.essaId
+  state.setup.byRole.presence.startingHandResolved = state.setup.byRole.presence.startingHandResolved == true
+
+  state.setup.byRole.absence = state.setup.byRole.absence or {}
+  state.setup.byRole.absence.playerColor = state.setup.byRole.absence.playerColor
+  state.setup.byRole.absence.mode = state.setup.byRole.absence.mode or "base"
+  state.setup.byRole.absence.essaId = state.setup.byRole.absence.essaId
+  state.setup.byRole.absence.startingHandResolved = state.setup.byRole.absence.startingHandResolved == true
+
+  state.setup.firstPlayer = state.setup.firstPlayer
+end
+
+function getRoleLabel(role)
+  return role == "presence" and "Presence" or "Absence"
+end
+
+function getRoleSetup(role)
+  ensureSetupDefaults()
+  if role ~= "presence" and role ~= "absence" then
+    return nil
+  end
+  return state.setup.byRole[role]
+end
+
+function isSetupHost(playerColor)
+  if not playerColor or playerColor == "" then return false end
+  local p = Player[playerColor]
+  if not p then return false end
+  if p.admin == true then return true end
+  if p.promoted == true then return true end
+  return false
+end
+
+function requireSetupHost(playerColor, actionLabel)
+  if isSetupHost(playerColor) then
+    return true
+  end
+  broadcastToColor((actionLabel or "Action") .. " is host-only during setup.", playerColor or "White", { 1, 0.6, 0.4 })
+  return false
+end
+
+function resolveActiveRole(playerColor)
+  if uiState.currentDeckbuilderRole == "presence" or uiState.currentDeckbuilderRole == "absence" then
+    return uiState.currentDeckbuilderRole
+  end
+
+  ensureSetupDefaults()
+  if playerColor and state.setup.byRole.presence.playerColor == playerColor then
+    return "presence"
+  end
+  if playerColor and state.setup.byRole.absence.playerColor == playerColor then
+    return "absence"
+  end
+
+  return nil
+end
+
+function refreshSetupStatus(role)
+  ensureSetupDefaults()
+  local text = "Status: Ready"
+  local activeRole = role
+  if activeRole ~= "presence" and activeRole ~= "absence" then
+    activeRole = nil
+  end
+
+  if activeRole then
+    local setup = getRoleSetup(activeRole)
+    local roleLabel = getRoleLabel(activeRole)
+    local mode = setup.mode or "base"
+    local modeLabel = mode == "guided" and "Guided" or "Base"
+    local essaLabel = setup.essaId and "yes" or "no"
+    local progress = "0/0"
+    local skips = "0/" .. tostring(config.maxSkips)
+
+    if state.deckbuild and state.deckbuild.role == activeRole then
+      local shown = tonumber(state.deckbuild.decisionsShown or 0) or 0
+      local budget = tonumber(state.deckbuild.decisionBudget or config.baseDecisionBudget) or config.baseDecisionBudget
+      progress = tostring(shown) .. "/" .. tostring(budget)
+      skips = tostring(state.deckbuild.skipsUsed or 0) .. "/" .. tostring(state.deckbuild.maxSkips or config.maxSkips)
+    end
+
+    text = string.format("Status: %s | mode %s | decision %s | skips %s | Essa %s", roleLabel, modeLabel, progress, skips, essaLabel)
+  elseif state.statusText and state.statusText ~= "" then
+    text = state.statusText
+  end
+
+  updateStatusUi(text)
+  updateSetupUiActions(activeRole)
+end
+
+function updateSetupUiActions(role)
+  if not uiState.deckbuilderVisible then return end
+  local activeRole = role
+  if activeRole ~= "presence" and activeRole ~= "absence" then
+    activeRole = resolveActiveRole(uiState.lastPlayerColor)
+  end
+
+  local inGuided = false
+  local hasEssa = false
+  if activeRole then
+    local setup = getRoleSetup(activeRole)
+    inGuided = setup.mode == "guided"
+    hasEssa = setup.essaId ~= nil
+  end
+
+  pcall(function()
+    UI.setAttribute("btnStartDeckbuildMode", "active", inGuided and "false" or "true")
+  end)
+  pcall(function()
+    UI.setAttribute("btnReturnBaseMode", "active", inGuided and "true" or "false")
+  end)
+  pcall(function()
+    UI.setAttribute("btnSelectEssa", "active", activeRole and "true" or "false")
+  end)
+  pcall(function()
+    UI.setAttribute("btnResolveHands", "active", hasEssa and "true" or "false")
+  end)
+  pcall(function()
+    UI.setAttribute("btnResolveFirstPlayer", "active", "true")
+  end)
 end
 
 function onObjectSpawn(obj)
@@ -270,6 +415,11 @@ end
 function openDeckbuilderForRole(role, playerColor)
   if role == "presence" or role == "absence" then
     uiState.currentDeckbuilderRole = role
+    if playerColor and playerColor ~= "" then
+      ensureSetupDefaults()
+      state.setup.byRole[role].playerColor = playerColor
+      uiState.lastPlayerColor = playerColor
+    end
   end
 
   openDeckbuilderUi(playerColor)
@@ -309,7 +459,10 @@ function openDeckbuilderUi(playerColor)
     end
   end
   applyDeckbuilderRoleMode()
-  updateStatusUi(state.statusText)
+  if playerColor and playerColor ~= "" then
+    uiState.lastPlayerColor = playerColor
+  end
+  refreshSetupStatus(uiState.currentDeckbuilderRole)
 end
 
 function closeDeckbuilderUi(playerColor)
@@ -893,6 +1046,8 @@ function applyDeckbuilderRoleMode()
   pcall(function()
     UI.setAttribute("btnAbsence", "active", role ~= "presence" and "true" or "false")
   end)
+
+  refreshSetupStatus(role)
 end
 
 function objectHasTag(obj, tagName)
@@ -911,6 +1066,7 @@ function onSave()
     roundValue = state.roundValue,
     statusText = state.statusText,
     taxonSettings = state.taxonSettings,
+    setup = state.setup,
   })
 end
 
@@ -950,17 +1106,166 @@ function createButtons()
 end
 
 function onBuildPresence(arg1, arg2)
-  local playerColor = resolvePlayerColor(arg1, arg2)
-  ensureCards(function()
-    startDeckbuild("presence", playerColor)
-  end)
+  uiState.currentDeckbuilderRole = "presence"
+  onStartDeckbuildMode(arg1, arg2)
 end
 
 function onBuildAbsence(arg1, arg2)
+  uiState.currentDeckbuilderRole = "absence"
+  onStartDeckbuildMode(arg1, arg2)
+end
+
+function onStartDeckbuildMode(arg1, arg2)
   local playerColor = resolvePlayerColor(arg1, arg2)
+  if not requireSetupHost(playerColor, "Start Deckbuild Mode") then
+    return
+  end
+
+  local role = resolveActiveRole(playerColor)
+  if role == nil then
+    broadcastToColor("Pick Presence or Absence deckbuilder first.", playerColor, { 1, 0.8, 0.4 })
+    return
+  end
+
+  local setup = getRoleSetup(role)
+  setup.mode = "guided"
+  state.setup.phase = "deckbuild"
+  uiState.currentDeckbuilderRole = role
+  uiState.lastPlayerColor = playerColor
+
   ensureCards(function()
-    startDeckbuild("absence", playerColor)
+    startDeckbuild(role, playerColor)
+    broadcastToColor(getRoleLabel(role) .. " setup switched to guided deckbuild mode.", playerColor, { 0.8, 1, 0.8 })
+    refreshSetupStatus(role)
   end)
+end
+
+function onReturnToBaseMode(arg1, arg2)
+  local playerColor = resolvePlayerColor(arg1, arg2)
+  if not requireSetupHost(playerColor, "Return to Base Mode") then
+    return
+  end
+
+  local role = resolveActiveRole(playerColor)
+  if role == nil then
+    broadcastToColor("Pick Presence or Absence deckbuilder first.", playerColor, { 1, 0.8, 0.4 })
+    return
+  end
+
+  local setup = getRoleSetup(role)
+  setup.mode = "base"
+  setup.startingHandResolved = false
+  state.setup.firstPlayer = nil
+  if state.deckbuild and state.deckbuild.role == role then
+    state.deckbuild = nil
+  end
+
+  local otherRole = role == "presence" and "absence" or "presence"
+  if getRoleSetup(otherRole).mode ~= "guided" then
+    state.setup.phase = "base"
+  end
+
+  broadcastToColor(getRoleLabel(role) .. " returned to base setup mode.", playerColor, { 1, 1, 1 })
+  refreshSetupStatus(role)
+end
+
+function onSelectEssa(arg1, arg2)
+  local playerColor = resolvePlayerColor(arg1, arg2)
+  local role = resolveActiveRole(playerColor)
+  if role == nil then
+    broadcastToColor("Pick Presence or Absence deckbuilder first.", playerColor, { 1, 0.8, 0.4 })
+    return
+  end
+
+  local essaId = trim(UI.getAttribute("searchInput", "text") or "")
+  if essaId == "" then
+    broadcastToColor("Select Essa: enter an Essa card id in Search Cards input.", playerColor, { 1, 1, 1 })
+    return
+  end
+
+  ensureCards(function()
+    local card = findCardById(essaId)
+    if not card then
+      broadcastToColor("Essa not found: " .. essaId, playerColor, { 1, 0.6, 0.4 })
+      return
+    end
+
+    if not equalsIgnoreCase(card.taxonomy_rank, "Essa") then
+      broadcastToColor("Selected card is not rank Essa: " .. (card.id or essaId), playerColor, { 1, 0.7, 0.4 })
+      return
+    end
+
+    local setup = getRoleSetup(role)
+    setup.essaId = card.id
+    broadcastToColor(getRoleLabel(role) .. " Essa selected: " .. (card.display_name or card.id), playerColor, { 0.8, 1, 0.8 })
+    refreshSetupStatus(role)
+  end)
+end
+
+function onResolveStartingHands(arg1, arg2)
+  local playerColor = resolvePlayerColor(arg1, arg2)
+  if not requireSetupHost(playerColor, "Resolve Starting Hands") then
+    return
+  end
+
+  ensureSetupDefaults()
+  local presenceSetup = getRoleSetup("presence")
+  local absenceSetup = getRoleSetup("absence")
+  if not presenceSetup.essaId or not absenceSetup.essaId then
+    broadcastToColor("Both roles must select Essa before dealing starting hands.", playerColor, { 1, 0.7, 0.4 })
+    return
+  end
+
+  local presenceColor = presenceSetup.playerColor or "White"
+  local absenceColor = absenceSetup.playerColor or "Black"
+  local presenceDeck = findFirstTaggedObject(tags.presenceDeck)
+  local absenceDeck = findFirstTaggedObject(tags.absenceDeck)
+  if not presenceDeck or not absenceDeck then
+    broadcastToColor("Resolve Starting Hands: tagged Presence/Absence decks are required.", playerColor, { 1, 0.6, 0.4 })
+    return
+  end
+
+  local okPresence = pcall(function() presenceDeck.deal(7, presenceColor) end)
+  local okAbsence = pcall(function() absenceDeck.deal(7, absenceColor) end)
+  if not okPresence or not okAbsence then
+    broadcastToColor("Resolve Starting Hands failed. Ensure both deck objects are valid deck stacks.", playerColor, { 1, 0.5, 0.5 })
+    return
+  end
+
+  presenceSetup.startingHandResolved = true
+  absenceSetup.startingHandResolved = true
+  state.setup.phase = "ready_to_start"
+  broadcastToAll("Starting hands resolved (7 cards each).", { 0.8, 1, 0.8 })
+  refreshSetupStatus(uiState.currentDeckbuilderRole)
+end
+
+function onResolveFirstPlayer(arg1, arg2)
+  local playerColor = resolvePlayerColor(arg1, arg2)
+  if not requireSetupHost(playerColor, "Resolve First Player") then
+    return
+  end
+
+  local presenceSetup = getRoleSetup("presence")
+  local absenceSetup = getRoleSetup("absence")
+  if not presenceSetup.startingHandResolved or not absenceSetup.startingHandResolved then
+    broadcastToColor("Resolve First Player requires both starting hands to be resolved first.", playerColor, { 1, 0.7, 0.4 })
+    return
+  end
+
+  local presenceColor = presenceSetup.playerColor or "White"
+  local absenceColor = absenceSetup.playerColor or "Black"
+  local presenceSum = getOpeningHandManaSum(presenceColor)
+  local absenceSum = getOpeningHandManaSum(absenceColor)
+  local winnerRole = "presence"
+  if absenceSum > presenceSum then
+    winnerRole = "absence"
+  end
+
+  state.setup.firstPlayer = winnerRole
+  state.setup.phase = "in_game"
+  local msg = string.format("First player: %s (Presence=%d, Absence=%d)", getRoleLabel(winnerRole), presenceSum, absenceSum)
+  broadcastToAll(msg, { 0.85, 1, 0.85 })
+  refreshSetupStatus(uiState.currentDeckbuilderRole)
 end
 
 function onImportDecklist(arg1, arg2)
@@ -973,6 +1278,13 @@ function onImportDecklist(arg1, arg2)
   end
 
   ensureCards(function()
+    local role = resolveActiveRole(playerColor) or (state.deckbuild and state.deckbuild.role) or "absence"
+    local roleSetup = getRoleSetup(role)
+    if roleSetup then
+      roleSetup.mode = "import"
+      state.setup.phase = "deckbuild"
+    end
+
     local resolvedCards, missing = resolveDecklist(ids)
     local msg = string.format("Import decklist: %d found, %d missing.", #resolvedCards, #missing)
     broadcastToColor(msg, playerColor, { 1, 1, 1 })
@@ -981,8 +1293,8 @@ function onImportDecklist(arg1, arg2)
     end
 
     if #resolvedCards > 0 then
-      local role = state.deckbuild and state.deckbuild.role or "absence"
       spawnRoleDeck(role, resolvedCards, playerColor, "Imported Deck")
+      refreshSetupStatus(role)
     end
   end)
 end
@@ -1092,8 +1404,18 @@ function onSkipStep(arg1, arg2)
     broadcastToColor("No active deckbuild. Start Presence/Absence deckbuilding first.", playerColor, { 1, 0.8, 0.4 })
     return
   end
+
+  local previousSkips = state.deckbuild.skipsUsed or 0
+  state.deckbuild.skipsUsed = math.min(previousSkips + 1, state.deckbuild.maxSkips or config.maxSkips)
+  if previousSkips < (state.deckbuild.maxSkips or config.maxSkips)
+    and state.deckbuild.decisionBudget and state.deckbuild.maxDecisionBudget
+  then
+    state.deckbuild.decisionBudget = math.min(state.deckbuild.decisionBudget + 1, state.deckbuild.maxDecisionBudget)
+  end
+
   broadcastToColor("Step skipped.", playerColor, { 1, 1, 1 })
   advanceDeckbuildStep(playerColor)
+  refreshSetupStatus(state.deckbuild and state.deckbuild.role or uiState.currentDeckbuilderRole)
 end
 
 function onRerollStep(arg1, arg2)
@@ -1118,24 +1440,40 @@ function onFinalizeDeck(arg1, arg2)
     return
   end
 
+  local role = state.deckbuild.role or resolveActiveRole(playerColor)
+  local setup = getRoleSetup(role)
+  if setup and not setup.essaId then
+    broadcastToColor("Finalize blocked: select Essa first.", playerColor, { 1, 0.7, 0.4 })
+    refreshSetupStatus(role)
+    return
+  end
+
   spawnRoleDeck(state.deckbuild.role, state.deckbuild.pickedCards, playerColor, "Draft Deck")
+  refreshSetupStatus(role)
 end
 
 function startDeckbuild(role, playerColor)
   local order = getTaxonOrder(role)
   state.deckbuild = {
     role = role,
+    mode = "guided",
     stepIndex = 1,
     order = order,
     picksThisStep = 0,
     pickedIds = {},
     pickedCards = {},
     currentOptions = {},
+    decisionsShown = 1,
+    decisionBudget = config.baseDecisionBudget,
+    maxDecisionBudget = config.maxDecisionBudget,
+    skipsUsed = 0,
+    maxSkips = config.maxSkips,
   }
 
   local label = role == "presence" and "Presence" or "Absence"
   broadcastToColor(label .. " deckbuilder started.", playerColor, { 1, 1, 1 })
   prepareCurrentStepOptions(playerColor)
+  refreshSetupStatus(role)
 end
 
 function getTaxonOrder(role)
@@ -1325,7 +1663,9 @@ end
 function advanceDeckbuildStep(playerColor)
   if not state.deckbuild then return end
   state.deckbuild.stepIndex = state.deckbuild.stepIndex + 1
+  state.deckbuild.decisionsShown = (state.deckbuild.decisionsShown or 0) + 1
   prepareCurrentStepOptions(playerColor)
+  refreshSetupStatus(state.deckbuild.role)
 end
 
 function resolveDecklist(ids)
@@ -1548,6 +1888,52 @@ function resolveDeckSpawnTransform(roleKey)
     position = { worldPos.x, spawnY, worldPos.z },
     rotation = rotation,
   }
+end
+
+function findFirstTaggedObject(tagName)
+  local tagged = getObjectsWithTag(tagName) or {}
+  for _, obj in ipairs(tagged) do
+    if obj and not obj.isDestroyed() then
+      return obj
+    end
+  end
+  return nil
+end
+
+function getOpeningHandManaSum(playerColor)
+  local p = Player[playerColor]
+  if not p then return 0 end
+
+  local handObjects = {}
+  local ok, result = pcall(function()
+    return p.getHandObjects()
+  end)
+  if ok and result then
+    handObjects = result
+  end
+
+  local total = 0
+  for _, obj in ipairs(handObjects) do
+    total = total + extractManaFromObject(obj)
+  end
+  return total
+end
+
+function extractManaFromObject(obj)
+  if not obj or obj.isDestroyed() then return 0 end
+  local description = ""
+  local okDesc, value = pcall(function()
+    return obj.getDescription()
+  end)
+  if okDesc and value then
+    description = tostring(value)
+  end
+
+  local mana = string.match(description, '"mana_cost"%s*:%s*(%d+)')
+  if not mana then
+    mana = string.match(description, '"mana"%s*:%s*(%d+)')
+  end
+  return tonumber(mana or 0) or 0
 end
 
 function ensureZoneMarkers()
