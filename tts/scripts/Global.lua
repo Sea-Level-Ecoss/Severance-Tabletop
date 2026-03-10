@@ -1509,10 +1509,15 @@ function onResolveStartingHands(arg1, arg2)
 
   local presenceColor = presenceSetup.playerColor or "White"
   local absenceColor = absenceSetup.playerColor or "Black"
-  local presenceDeck = findFirstTaggedObject(tags.presenceDeck, nameRegistry.presenceDeck)
-  local absenceDeck = findFirstTaggedObject(tags.absenceDeck, nameRegistry.absenceDeck)
+  local presenceDeck = resolvePlayableDeckForRole("presence")
+  local absenceDeck = resolvePlayableDeckForRole("absence")
   if not presenceDeck or not absenceDeck then
-    broadcastToColor("Resolve Starting Hands: tagged Presence/Absence decks are required.", playerColor, { 1, 0.6, 0.4 })
+    broadcastToColor("Resolve Starting Hands: place a playable deck stack on each deck marker plane.", playerColor, { 1, 0.6, 0.4 })
+    return
+  end
+
+  if getDeckObjectQuantity(presenceDeck) < 7 or getDeckObjectQuantity(absenceDeck) < 7 then
+    broadcastToColor("Resolve Starting Hands: each role needs at least 7 cards in its playable deck stack.", playerColor, { 1, 0.7, 0.4 })
     return
   end
 
@@ -2349,6 +2354,77 @@ function findFirstTaggedObject(tagName, fallbackNames)
     end
   end
   return nil
+end
+
+function resolveRoleDeckMarker(roleKey)
+  if roleKey == "presence" then
+    return findFirstTaggedObject(tags.presenceDeck, nameRegistry.presenceDeck)
+  end
+  return findFirstTaggedObject(tags.absenceDeck, nameRegistry.absenceDeck)
+end
+
+function getObjectTagValue(obj)
+  if not obj or obj.isDestroyed() then return nil end
+  local ok, tag = pcall(function() return obj.tag end)
+  if ok then
+    return tostring(tag or "")
+  end
+  return nil
+end
+
+function isPlayableDeckObject(obj)
+  local tagValue = getObjectTagValue(obj)
+  return tagValue == "Deck" or tagValue == "Card"
+end
+
+function getDeckObjectQuantity(obj)
+  if not obj or obj.isDestroyed() then return 0 end
+  local ok, qty = pcall(function() return obj.getQuantity() end)
+  if ok and qty then
+    return tonumber(qty) or 0
+  end
+
+  if isPlayableDeckObject(obj) then
+    return 1
+  end
+  return 0
+end
+
+function resolvePlayableDeckForRole(roleKey)
+  local marker = resolveRoleDeckMarker(roleKey)
+  if not marker or marker.isDestroyed() then
+    return nil
+  end
+
+  if isPlayableDeckObject(marker) then
+    return marker
+  end
+
+  local okPos, markerPos = pcall(function() return marker.getPosition() end)
+  if not okPos or not markerPos then
+    return nil
+  end
+
+  local bestObj = nil
+  local bestDist = math.huge
+  local allObjects = getObjects() or {}
+  for _, obj in ipairs(allObjects) do
+    if obj and not obj.isDestroyed() and isPlayableDeckObject(obj) then
+      local okObjPos, objPos = pcall(function() return obj.getPosition() end)
+      if okObjPos and objPos then
+        local dx = (objPos.x or 0) - (markerPos.x or 0)
+        local dz = (objPos.z or 0) - (markerPos.z or 0)
+        local dy = math.abs((objPos.y or 0) - (markerPos.y or 0))
+        local dist2 = (dx * dx) + (dz * dz)
+        if dy <= 4 and dist2 <= (5 * 5) and dist2 < bestDist then
+          bestDist = dist2
+          bestObj = obj
+        end
+      end
+    end
+  end
+
+  return bestObj
 end
 
 function getOpeningHandManaSum(playerColor)
