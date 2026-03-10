@@ -2,20 +2,25 @@
 
 This is the coding execution order for Milestone A.
 
+## Progress Snapshot
+
+- PR-1 complete on branch `feature/tts-implementation-readiness` at commit `2ab8897`.
+- Remaining work is focused on replacing step draft flow with 40-decision draft logic and tightening start-resolution validation.
+
 ## Task Group 1: Setup State Machine
 
 File: `tts/scripts/Global.lua`
 
-1. Add setup phase enum:
+1. [x] Add setup phase enum:
 - `base`
 - `role_select`
 - `deckbuild`
 - `essa_select`
 - `start_resolve`
 
-2. Add host-gated transition functions.
+2. [x] Add host-gated transition functions.
 
-3. Persist setup state via `onSave`/`onLoad`.
+3. [x] Persist setup state via `onSave`/`onLoad`.
 
 ## Task Group 2: Guided Draft Engine (40 + skips)
 
@@ -34,20 +39,20 @@ Files:
 - `tts/scripts/Global.lua`
 - `tts/scripts/ui.xml`
 
-1. Add Essa selection input/action.
-2. Validate Essa exists in cached card pool.
-3. Block finalize/start until Essa locked.
+1. [x] Add Essa selection input/action.
+2. [x] Validate Essa exists in cached card pool.
+3. [x] Block finalize/start until Essa locked.
 
 ## Task Group 4: Start Resolver
 
 File: `tts/scripts/Global.lua`
 
-1. Draw 7 per player from resolved deck object.
-2. Parse mana value from drawn cards.
-3. Resolve first player:
+1. [x] Draw 7 per player from resolved deck object.
+2. [x] Parse mana value from drawn cards.
+3. [x] Resolve first player:
 - compare sums
 - apply tie-break.
-4. Broadcast decision and write to setup status state.
+4. [x] Broadcast decision and write to setup status state.
 
 ## Task Group 5: UI and UX Completion
 
@@ -55,9 +60,9 @@ Files:
 - `tts/scripts/ui.xml`
 - `tts/scripts/Global.lua`
 
-1. Add `Start Deckbuild Mode` and `Return to Base Mode` actions.
-2. Add setup progress line (`decision`, `skips`, `essa`, `first player`).
-3. Add failure messages for invalid transitions.
+1. [x] Add `Start Deckbuild Mode` and `Return to Base Mode` actions.
+2. [x] Add setup progress line (`decision`, `skips`, `essa`, `first player`).
+3. [x] Add failure messages for invalid transitions.
 
 ## Task Group 6: Acceptance Test Script
 
