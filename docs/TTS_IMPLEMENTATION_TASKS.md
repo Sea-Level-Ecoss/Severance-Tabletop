@@ -1,0 +1,77 @@
+# TTS Implementation Task Matrix
+
+This is the coding execution order for Milestone A.
+
+## Task Group 1: Setup State Machine
+
+File: `tts/scripts/Global.lua`
+
+1. Add setup phase enum:
+- `base`
+- `role_select`
+- `deckbuild`
+- `essa_select`
+- `start_resolve`
+
+2. Add host-gated transition functions.
+
+3. Persist setup state via `onSave`/`onLoad`.
+
+## Task Group 2: Guided Draft Engine (40 + skips)
+
+File: `tts/scripts/Global.lua`
+
+1. Replace step-based progression with decision-based progression.
+2. Add skip behavior:
+- increment `skipsUsed`
+- increment decision budget if `< maxDecisionBudget`
+3. Add weighted pool selector by role + decision index.
+4. Ensure no duplicate card ids in player picks.
+
+## Task Group 3: Essa Selection Gate
+
+Files:
+- `tts/scripts/Global.lua`
+- `tts/scripts/ui.xml`
+
+1. Add Essa selection input/action.
+2. Validate Essa exists in cached card pool.
+3. Block finalize/start until Essa locked.
+
+## Task Group 4: Start Resolver
+
+File: `tts/scripts/Global.lua`
+
+1. Draw 7 per player from resolved deck object.
+2. Parse mana value from drawn cards.
+3. Resolve first player:
+- compare sums
+- apply tie-break.
+4. Broadcast decision and write to setup status state.
+
+## Task Group 5: UI and UX Completion
+
+Files:
+- `tts/scripts/ui.xml`
+- `tts/scripts/Global.lua`
+
+1. Add `Start Deckbuild Mode` and `Return to Base Mode` actions.
+2. Add setup progress line (`decision`, `skips`, `essa`, `first player`).
+3. Add failure messages for invalid transitions.
+
+## Task Group 6: Acceptance Test Script
+
+Files:
+- `docs/TTS_MILESTONE_A_TESTS.md` (new)
+- optional helper in `tools/`
+
+1. Create manual test checklist for all setup paths.
+2. Add repeatability test (3 sequential setup runs).
+3. Add save/load continuity test.
+
+## Suggested PR Slices
+
+1. PR-1: setup state + UI mode controls.
+2. PR-2: 40-decision draft + skip budget logic.
+3. PR-3: Essa gate + start resolver + first-player decision.
+4. PR-4: polish + acceptance checklist.

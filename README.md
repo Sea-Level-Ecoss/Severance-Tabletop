@@ -33,3 +33,6 @@ Tabletop Simulator workshop mod + card import pipeline for Severance.
 - `docs/TTS_IMPLEMENTATION_READINESS.md` - milestone plan and acceptance criteria.
 - `docs/TTS_OPEN_QUESTIONS.md` - blockers and decisions required before/through implementation.
 - `docs/NAMING_BOUNDARY.md` - canonical terminology boundary for TTS vs Unity contexts.
+- `docs/TTS_MILESTONE_A_SPEC.md` - technical spec for setup alpha implementation.
+- `docs/TTS_IMPLEMENTATION_TASKS.md` - file-level coding task matrix.
+- `docs/TTS_MILESTONE_A_TESTS.md` - manual acceptance tests for Milestone A.

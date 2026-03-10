@@ -113,3 +113,9 @@ Implementation should start when:
 4. Combat trigger payload schema is finalized.
 
 Track remaining items in `docs/TTS_OPEN_QUESTIONS.md`.
+
+## Execution Docs
+
+- `docs/TTS_MILESTONE_A_SPEC.md`
+- `docs/TTS_IMPLEMENTATION_TASKS.md`
+- `docs/TTS_MILESTONE_A_TESTS.md`
