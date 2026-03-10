@@ -5,8 +5,9 @@ This is the coding execution order for Milestone A.
 ## Progress Snapshot
 
 - PR-1 complete on branch `feature/tts-implementation-readiness` at commit `2ab8897`.
-- PR-2 started at commit `29d9379` with a decision-budget draft loop (`decision x / budget`) replacing strict step progression.
-- Remaining work is focused on weighted pool selection + legality hardening for the full 40/47 guided draft target.
+- PR-2 completed at commit `1334912` with decision-budget flow, weighted role-biased option selection, and guided legality checks.
+- PR-3 completed in follow-up commits with stricter setup/start preconditions and persisted first-player resolver outputs.
+- Remaining work is PR-4 polish + acceptance pass.
 
 ## Task Group 1: Setup State Machine
 
@@ -27,12 +28,12 @@ File: `tts/scripts/Global.lua`
 
 File: `tts/scripts/Global.lua`
 
-1. Replace step-based progression with decision-based progression.
-2. Add skip behavior:
+1. [x] Replace step-based progression with decision-based progression.
+2. [x] Add skip behavior:
 - increment `skipsUsed`
 - increment decision budget if `< maxDecisionBudget`
-3. Add weighted pool selector by role + decision index.
-4. Ensure no duplicate card ids in player picks.
+3. [x] Add weighted pool selector by role + decision index.
+4. [x] Ensure no duplicate card ids in player picks.
 
 ## Task Group 3: Essa Selection Gate
 

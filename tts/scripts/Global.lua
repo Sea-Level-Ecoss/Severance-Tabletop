@@ -96,6 +96,8 @@ local state = {
       absence = { playerColor = nil, mode = "base", essaId = nil, startingHandResolved = false },
     },
     firstPlayer = nil,
+    startingManaSums = { presence = 0, absence = 0 },
+    tieBreakApplied = false,
   },
 }
 
@@ -236,6 +238,10 @@ function ensureSetupDefaults()
   state.setup.byRole.absence.startingHandResolved = state.setup.byRole.absence.startingHandResolved == true
 
   state.setup.firstPlayer = state.setup.firstPlayer
+  state.setup.startingManaSums = state.setup.startingManaSums or { presence = 0, absence = 0 }
+  state.setup.startingManaSums.presence = tonumber(state.setup.startingManaSums.presence or 0) or 0
+  state.setup.startingManaSums.absence = tonumber(state.setup.startingManaSums.absence or 0) or 0
+  state.setup.tieBreakApplied = state.setup.tieBreakApplied == true
 end
 
 function getRoleLabel(role)
@@ -314,6 +320,8 @@ function refreshSetupStatus(role)
     local progress = "0/0"
     local skips = "0/" .. tostring(config.maxSkips)
     local firstPlayer = state.setup.firstPlayer and getRoleLabel(state.setup.firstPlayer) or "pending"
+    local manaPresence = state.setup.startingManaSums and state.setup.startingManaSums.presence or 0
+    local manaAbsence = state.setup.startingManaSums and state.setup.startingManaSums.absence or 0
 
     if state.deckbuild and state.deckbuild.role == activeRole then
       local shown = tonumber(state.deckbuild.decisionsShown or 0) or 0
@@ -322,7 +330,17 @@ function refreshSetupStatus(role)
       skips = tostring(state.deckbuild.skipsUsed or 0) .. "/" .. tostring(state.deckbuild.maxSkips or config.maxSkips)
     end
 
-    text = string.format("Status: %s | mode %s | decision %s | skips %s | Essa %s | First %s", roleLabel, modeLabel, progress, skips, essaLabel, firstPlayer)
+    text = string.format(
+      "Status: %s | mode %s | decision %s | skips %s | Essa %s | First %s | Mana P/A %d/%d",
+      roleLabel,
+      modeLabel,
+      progress,
+      skips,
+      essaLabel,
+      firstPlayer,
+      tonumber(manaPresence or 0) or 0,
+      tonumber(manaAbsence or 0) or 0
+    )
   elseif state.statusText and state.statusText ~= "" then
     text = state.statusText
   end
@@ -1148,6 +1166,8 @@ function onStartDeckbuildMode(arg1, arg2)
   state.setup.phase = "deckbuild"
   setup.startingHandResolved = false
   state.setup.firstPlayer = nil
+  state.setup.tieBreakApplied = false
+  state.setup.startingManaSums = { presence = 0, absence = 0 }
   uiState.currentDeckbuilderRole = role
   uiState.lastPlayerColor = playerColor
 
@@ -1174,6 +1194,8 @@ function onReturnToBaseMode(arg1, arg2)
   setup.mode = "base"
   setup.startingHandResolved = false
   state.setup.firstPlayer = nil
+  state.setup.tieBreakApplied = false
+  state.setup.startingManaSums = { presence = 0, absence = 0 }
   if state.deckbuild and state.deckbuild.role == role then
     state.deckbuild = nil
   end
@@ -1195,6 +1217,12 @@ function onSelectEssa(arg1, arg2)
     return
   end
 
+  local roleSetup = getRoleSetup(role)
+  if roleSetup.mode == "base" then
+    broadcastToColor("Select Essa is only available after entering deckbuild/import mode.", playerColor, { 1, 0.8, 0.4 })
+    return
+  end
+
   local essaId = trim(UI.getAttribute("searchInput", "text") or "")
   if essaId == "" then
     broadcastToColor("Select Essa: enter an Essa card id in Search Cards input.", playerColor, { 1, 1, 1 })
@@ -1213,8 +1241,7 @@ function onSelectEssa(arg1, arg2)
       return
     end
 
-    local setup = getRoleSetup(role)
-    setup.essaId = card.id
+    roleSetup.essaId = card.id
     if getRoleSetup("presence").essaId and getRoleSetup("absence").essaId then
       state.setup.phase = "essa_select"
     end
@@ -1236,6 +1263,10 @@ function onResolveStartingHands(arg1, arg2)
 
   local presenceSetup = getRoleSetup("presence")
   local absenceSetup = getRoleSetup("absence")
+  if presenceSetup.mode == "base" or absenceSetup.mode == "base" then
+    broadcastToColor("Both roles must enter deckbuild/import mode before resolving starting hands.", playerColor, { 1, 0.7, 0.4 })
+    return
+  end
   if not presenceSetup.essaId or not absenceSetup.essaId then
     broadcastToColor("Both roles must select Essa before dealing starting hands.", playerColor, { 1, 0.7, 0.4 })
     return
@@ -1261,6 +1292,8 @@ function onResolveStartingHands(arg1, arg2)
   absenceSetup.startingHandResolved = true
   state.setup.phase = "start_resolve"
   state.setup.firstPlayer = nil
+  state.setup.tieBreakApplied = false
+  state.setup.startingManaSums = { presence = 0, absence = 0 }
   broadcastToAll("Starting hands resolved (7 cards each).", { 0.8, 1, 0.8 })
   refreshSetupStatus(uiState.currentDeckbuilderRole)
 end
@@ -1292,13 +1325,18 @@ function onResolveFirstPlayer(arg1, arg2)
   end
 
   local winnerRole = "presence"
+  local tieBreakApplied = false
   if absenceSum > presenceSum then
     winnerRole = "absence"
+  elseif absenceSum == presenceSum then
+    tieBreakApplied = true
   end
 
+  state.setup.startingManaSums = { presence = presenceSum, absence = absenceSum }
   state.setup.firstPlayer = winnerRole
+  state.setup.tieBreakApplied = tieBreakApplied
   state.setup.phase = "in_game"
-  local msg = string.format("First player: %s (Presence=%d, Absence=%d)", getRoleLabel(winnerRole), presenceSum, absenceSum)
+  local msg = string.format("First player: %s (Presence=%d, Absence=%d%s)", getRoleLabel(winnerRole), presenceSum, absenceSum, tieBreakApplied and ", tie-break" or "")
   broadcastToAll(msg, { 0.85, 1, 0.85 })
   refreshSetupStatus(uiState.currentDeckbuilderRole)
 end
@@ -1320,6 +1358,8 @@ function onImportDecklist(arg1, arg2)
       state.setup.phase = "deckbuild"
       roleSetup.startingHandResolved = false
       state.setup.firstPlayer = nil
+      state.setup.tieBreakApplied = false
+      state.setup.startingManaSums = { presence = 0, absence = 0 }
     end
 
     local resolvedCards, missing = resolveDecklist(ids)
