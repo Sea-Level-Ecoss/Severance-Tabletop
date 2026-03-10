@@ -10,7 +10,6 @@ local config = {
   fallbackCardFaceUrl = "http://localhost:8787/images/ss_cards/card_back.png",
   cacheTtlSeconds = 300,
   optionCountPerStep = 3,
-  picksPerStep = 2,
   baseDecisionBudget = 40,
   maxDecisionBudget = 47,
   maxSkips = 7,
@@ -1457,9 +1456,9 @@ function startDeckbuild(role, playerColor)
   state.deckbuild = {
     role = role,
     mode = "guided",
-    stepIndex = 1,
     order = order,
-    picksThisStep = 0,
+    picksThisDecision = 0,
+    picksPerDecision = 1,
     pickedIds = {},
     pickedCards = {},
     currentOptions = {},
@@ -1575,7 +1574,16 @@ end
 
 function getCurrentRank()
   if not state.deckbuild then return nil end
-  return state.deckbuild.order[state.deckbuild.stepIndex]
+  if (state.deckbuild.decisionsShown or 1) > (state.deckbuild.decisionBudget or config.baseDecisionBudget) then
+    return nil
+  end
+  local order = state.deckbuild.order or {}
+  if #order == 0 then
+    return nil
+  end
+  local decisionIndex = state.deckbuild.decisionsShown or 1
+  local orderIndex = ((decisionIndex - 1) % #order) + 1
+  return order[orderIndex]
 end
 
 function prepareCurrentStepOptions(playerColor)
@@ -1583,7 +1591,7 @@ function prepareCurrentStepOptions(playerColor)
 
   local rank = getCurrentRank()
   if not rank then
-    broadcastToColor("All taxon steps complete. Finalize deck when ready.", playerColor, { 0.7, 1, 0.7 })
+    broadcastToColor("Decision budget complete. Finalize deck when ready.", playerColor, { 0.7, 1, 0.7 })
     updateStatusUi("Deckbuild complete. Finalize deck.")
     return
   end
@@ -1599,9 +1607,9 @@ function prepareCurrentStepOptions(playerColor)
   end
 
   state.deckbuild.currentOptions = sampleCards(pool, config.optionCountPerStep)
-  state.deckbuild.picksThisStep = 0
+  state.deckbuild.picksThisDecision = 0
 
-  local header = string.format("Draft Step %d/%d - %s", state.deckbuild.stepIndex, #state.deckbuild.order, rank)
+  local header = string.format("Draft Decision %d/%d - %s", state.deckbuild.decisionsShown, state.deckbuild.decisionBudget, rank)
   broadcastToColor(header, playerColor, { 0.8, 0.9, 1 })
 
   if #state.deckbuild.currentOptions == 0 then
@@ -1631,11 +1639,11 @@ function pickDeckbuildCard(cardId, playerColor)
 
   state.deckbuild.pickedIds[chosen.id] = true
   table.insert(state.deckbuild.pickedCards, chosen)
-  state.deckbuild.picksThisStep = (state.deckbuild.picksThisStep or 0) + 1
+  state.deckbuild.picksThisDecision = (state.deckbuild.picksThisDecision or 0) + 1
 
   broadcastToColor("Picked: " .. (chosen.display_name or chosen.id), playerColor, { 0.7, 1, 0.7 })
 
-  if state.deckbuild.picksThisStep >= config.picksPerStep then
+  if state.deckbuild.picksThisDecision >= (state.deckbuild.picksPerDecision or 1) then
     advanceDeckbuildStep(playerColor)
     return true
   end
@@ -1662,7 +1670,6 @@ end
 
 function advanceDeckbuildStep(playerColor)
   if not state.deckbuild then return end
-  state.deckbuild.stepIndex = state.deckbuild.stepIndex + 1
   state.deckbuild.decisionsShown = (state.deckbuild.decisionsShown or 0) + 1
   prepareCurrentStepOptions(playerColor)
   refreshSetupStatus(state.deckbuild.role)
