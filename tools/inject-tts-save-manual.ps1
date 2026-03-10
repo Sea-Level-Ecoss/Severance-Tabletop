@@ -5,7 +5,6 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$repoRoot = Split-Path -Parent $PSScriptRoot
 $injector = Join-Path $PSScriptRoot 'inject-tts-save.js'
 $savesDir = 'C:/Users/broki/OneDrive/Documents/My Games/Tabletop Simulator/Saves'
 
@@ -40,7 +39,12 @@ $nodeArgs = @(
 
 $env:TTS_INJECT_SKIP_BACKUP = '1'
 & node @nodeArgs
+$exitCode = $LASTEXITCODE
 Remove-Item Env:TTS_INJECT_SKIP_BACKUP -ErrorAction SilentlyContinue
+
+if ($exitCode -ne 0) {
+  throw "inject-tts-save.js failed with exit code $exitCode"
+}
 
 Write-Output "manual_slot=$SaveSlot"
 Write-Output "manual_save=$targetJson"

@@ -4,6 +4,14 @@ Helper scripts for export, validation, and save injection.
 
 ## TTS Save Injection
 
+Local machine install confirmed:
+
+- `C:\Program Files (x86)\Steam\steamapps\common\Tabletop Simulator`
+
+Quick local loop command (this machine):
+
+- `powershell -ExecutionPolicy Bypass -File .\tools\inject-tts-save-manual.ps1 -SaveSlot 20 -SaveName "[DEV] Severance Playtest"`
+
 - Auto-target latest Severance Playtest save (from TTS metadata):
 	- `node ./tools/inject-tts-save.js`
 - Inject into a fixed manual save slot (recommended for stable iteration):
