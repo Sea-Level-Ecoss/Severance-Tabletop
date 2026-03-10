@@ -27,3 +27,9 @@ Tabletop Simulator workshop mod + card import pipeline for Severance.
   - Import Decklist
   - Search Cards
 - Wire GrilwurtBot API calls and caching.
+
+## Implementation Readiness Docs
+
+- `docs/TTS_IMPLEMENTATION_READINESS.md` - milestone plan and acceptance criteria.
+- `docs/TTS_OPEN_QUESTIONS.md` - blockers and decisions required before/through implementation.
+- `docs/NAMING_BOUNDARY.md` - canonical terminology boundary for TTS vs Unity contexts.
