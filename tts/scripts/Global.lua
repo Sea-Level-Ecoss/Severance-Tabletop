@@ -128,6 +128,17 @@ local tags = {
   absenceEssa = "AbsenceEssa",
 }
 
+local nameRegistry = {
+  presenceDeck = { "Presence Deck" },
+  absenceDeck = { "Absence Deck" },
+  presenceRulebook = { "Presence Rulebook" },
+  absenceRulebook = { "Absence Rulebook" },
+  presenceTaxonCalc = { "Presence Taxon Calculator" },
+  absenceTaxonCalc = { "Absence Taxon Calculator" },
+  presencePlayZones = { "Presence Field", "Mean Field" },
+  absencePlayZones = { "Absence Field", "Mean Field" },
+}
+
 local taxonomyOrderByRole = {
   presence = { "Bin", "Basin", "Eco", "Kingdom", "Phylum", "Class", "Order", "Family", "Essa" },
   absence = { "Essa", "Family", "Order", "Class", "Phylum", "Kingdom", "Eco", "Basin", "Bin" },
@@ -406,14 +417,22 @@ end
 
 function onObjectEnterScriptingZone(zone, obj)
   if not zone or zone.isDestroyed() then return end
-  if zoneHasAnyTag(zone, { "PresencePlayZone", "AbsencePlayZone", tags.presenceEssa, tags.absenceEssa }) then
+  if zoneHasAnyTagOrName(
+    zone,
+    { "PresencePlayZone", "AbsencePlayZone", tags.presenceEssa, tags.absenceEssa },
+    { "Presence Field", "Absence Field", "Mean Field" }
+  ) then
     refreshTaxonCalculators()
   end
 end
 
 function onObjectLeaveScriptingZone(zone, obj)
   if not zone or zone.isDestroyed() then return end
-  if zoneHasAnyTag(zone, { "PresencePlayZone", "AbsencePlayZone", tags.presenceEssa, tags.absenceEssa }) then
+  if zoneHasAnyTagOrName(
+    zone,
+    { "PresencePlayZone", "AbsencePlayZone", tags.presenceEssa, tags.absenceEssa },
+    { "Presence Field", "Absence Field", "Mean Field" }
+  ) then
     refreshTaxonCalculators()
   end
 end
@@ -622,6 +641,10 @@ end
 function ensureTaxonCalculatorRole(roleKey)
   local tagName = roleKey == "presence" and tags.presenceTaxonCalc or tags.absenceTaxonCalc
   local tagged = getObjectsWithTag(tagName) or {}
+  if #tagged == 0 then
+    local fallbackNames = roleKey == "presence" and nameRegistry.presenceTaxonCalc or nameRegistry.absenceTaxonCalc
+    tagged = getObjectsByNameList(fallbackNames)
+  end
   for _, obj in ipairs(tagged) do
     attachTaxonCalculatorButtons(obj, roleKey)
   end
@@ -694,6 +717,10 @@ end
 function refreshTaxonCalculatorRole(roleKey)
   local calcTag = roleKey == "presence" and tags.presenceTaxonCalc or tags.absenceTaxonCalc
   local calculators = getObjectsWithTag(calcTag) or {}
+  if #calculators == 0 then
+    local fallbackNames = roleKey == "presence" and nameRegistry.presenceTaxonCalc or nameRegistry.absenceTaxonCalc
+    calculators = getObjectsByNameList(fallbackNames)
+  end
   if #calculators == 0 then return end
 
   local settings = state.taxonSettings[roleKey] or { includeBinBasin = true }
@@ -759,8 +786,27 @@ function collectRolePlayObjects(roleKey)
   local zoneTags = roleKey == "presence"
     and { "PresencePlayZone", "PresencePlay", "PresenceInPlay" }
     or { "AbsencePlayZone", "AbsencePlay", "AbsenceInPlay" }
+  local fallbackZoneNames = roleKey == "presence" and nameRegistry.presencePlayZones or nameRegistry.absencePlayZones
 
   local results = {}
+  local seenGuids = {}
+
+  local function addResult(obj)
+    if not obj or obj.isDestroyed() then return end
+    local guid = nil
+    local okGuid, value = pcall(function() return obj.getGUID() end)
+    if okGuid and value then
+      guid = tostring(value)
+    end
+    if guid and seenGuids[guid] then
+      return
+    end
+    if guid then
+      seenGuids[guid] = true
+    end
+    table.insert(results, obj)
+  end
+
   for _, tagName in ipairs(zoneTags) do
     local zones = getObjectsWithTag(tagName) or {}
     for _, zone in ipairs(zones) do
@@ -770,14 +816,29 @@ function collectRolePlayObjects(roleKey)
         end)
         if ok and objs then
           for _, o in ipairs(objs) do
-            if o and not o.isDestroyed() then
-              table.insert(results, o)
-            end
+            addResult(o)
           end
         end
       end
     end
   end
+
+  if #results == 0 then
+    local fallbackZones = getObjectsByNameList(fallbackZoneNames)
+    for _, zone in ipairs(fallbackZones) do
+      if zone and not zone.isDestroyed() then
+        local ok, objs = pcall(function()
+          return zone.getObjects(true)
+        end)
+        if ok and objs then
+          for _, o in ipairs(objs) do
+            addResult(o)
+          end
+        end
+      end
+    end
+  end
+
   return results
 end
 
@@ -965,14 +1026,49 @@ function zoneHasAnyTag(zone, tagList)
   return false
 end
 
+function objectNameMatchesAny(obj, nameList)
+  if not obj or obj.isDestroyed() then return false end
+  local objName = string.lower(trim(obj.getName() or ""))
+  if objName == "" then return false end
+
+  for _, expected in ipairs(nameList or {}) do
+    if objName == string.lower(trim(expected)) then
+      return true
+    end
+  end
+  return false
+end
+
+function getObjectsByNameList(nameList)
+  local results = {}
+  if not nameList or #nameList == 0 then
+    return results
+  end
+
+  local allObjects = getObjects() or {}
+  for _, obj in ipairs(allObjects) do
+    if obj and not obj.isDestroyed() and objectNameMatchesAny(obj, nameList) then
+      table.insert(results, obj)
+    end
+  end
+  return results
+end
+
+function zoneHasAnyTagOrName(zone, tagList, nameList)
+  if zoneHasAnyTag(zone, tagList) then
+    return true
+  end
+  return objectNameMatchesAny(zone, nameList)
+end
+
 function onRefreshRulebooksFromContext(playerColor, menuPosition)
   refreshRulebookObjects(playerColor)
 end
 
 function refreshRulebookObjects(playerColor)
   local updatedCount = 0
-  updatedCount = updatedCount + applyRulebookGuide(tags.presenceRulebook, rulebookGuides.PresenceRulebook)
-  updatedCount = updatedCount + applyRulebookGuide(tags.absenceRulebook, rulebookGuides.AbsenceRulebook)
+  updatedCount = updatedCount + applyRulebookGuide(tags.presenceRulebook, rulebookGuides.PresenceRulebook, nameRegistry.presenceRulebook)
+  updatedCount = updatedCount + applyRulebookGuide(tags.absenceRulebook, rulebookGuides.AbsenceRulebook, nameRegistry.absenceRulebook)
 
   if playerColor and type(playerColor) == "string" then
     if updatedCount > 0 then
@@ -983,10 +1079,13 @@ function refreshRulebookObjects(playerColor)
   end
 end
 
-function applyRulebookGuide(tagName, guide)
+function applyRulebookGuide(tagName, guide, fallbackNames)
   if not guide then return 0 end
 
   local tagged = getObjectsWithTag(tagName) or {}
+  if #tagged == 0 then
+    tagged = getObjectsByNameList(fallbackNames)
+  end
   local count = 0
   for _, obj in ipairs(tagged) do
     if obj and not obj.isDestroyed() then
@@ -1274,8 +1373,8 @@ function onResolveStartingHands(arg1, arg2)
 
   local presenceColor = presenceSetup.playerColor or "White"
   local absenceColor = absenceSetup.playerColor or "Black"
-  local presenceDeck = findFirstTaggedObject(tags.presenceDeck)
-  local absenceDeck = findFirstTaggedObject(tags.absenceDeck)
+  local presenceDeck = findFirstTaggedObject(tags.presenceDeck, nameRegistry.presenceDeck)
+  local absenceDeck = findFirstTaggedObject(tags.absenceDeck, nameRegistry.absenceDeck)
   if not presenceDeck or not absenceDeck then
     broadcastToColor("Resolve Starting Hands: tagged Presence/Absence decks are required.", playerColor, { 1, 0.6, 0.4 })
     return
@@ -2103,8 +2202,11 @@ function resolveDeckSpawnTransform(roleKey)
   }
 end
 
-function findFirstTaggedObject(tagName)
+function findFirstTaggedObject(tagName, fallbackNames)
   local tagged = getObjectsWithTag(tagName) or {}
+  if #tagged == 0 then
+    tagged = getObjectsByNameList(fallbackNames)
+  end
   for _, obj in ipairs(tagged) do
     if obj and not obj.isDestroyed() then
       return obj
