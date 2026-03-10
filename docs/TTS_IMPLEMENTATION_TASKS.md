@@ -7,7 +7,7 @@ This is the coding execution order for Milestone A.
 - PR-1 complete on branch `feature/tts-implementation-readiness` at commit `2ab8897`.
 - PR-2 completed at commit `1334912` with decision-budget flow, weighted role-biased option selection, and guided legality checks.
 - PR-3 completed in follow-up commits with stricter setup/start preconditions and persisted first-player resolver outputs.
-- Remaining work is PR-4 polish + acceptance pass.
+- PR-4 completed with UX polish, skip-cap rejection messaging, and acceptance results documentation.
 
 ## Task Group 1: Setup State Machine
 
@@ -72,9 +72,9 @@ Files:
 - `docs/TTS_MILESTONE_A_TESTS.md` (new)
 - optional helper in `tools/`
 
-1. Create manual test checklist for all setup paths.
-2. Add repeatability test (3 sequential setup runs).
-3. Add save/load continuity test.
+1. [x] Create manual test checklist for all setup paths.
+2. [x] Add repeatability test (3 sequential setup runs).
+3. [x] Add save/load continuity test.
 
 ## Suggested PR Slices
 

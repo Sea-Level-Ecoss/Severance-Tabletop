@@ -33,8 +33,8 @@
       <Button id="btnSearch" onClick="onSearchCards" text="Search Cards" fontSize="16" color="#243247CC" textColor="#FFFFFFFF" />
       <Button id="btnPick" onClick="onPickSearchId" text="Pick Search ID" fontSize="16" color="#2A3A52CC" textColor="#FFFFFFFF" />
       <Button id="btnAddManual" onClick="onAddSearchIdManual" text="Add Search ID Manually" fontSize="16" color="#324468CC" textColor="#FFFFFFFF" />
-      <Button id="btnSkipStep" onClick="onSkipStep" text="Skip Step" fontSize="16" color="#4D3C27CC" textColor="#FFFFFFFF" />
-      <Button id="btnRerollStep" onClick="onRerollStep" text="Reroll Step" fontSize="16" color="#3F324FCC" textColor="#FFFFFFFF" />
+      <Button id="btnSkipStep" onClick="onSkipStep" text="Skip Decision" fontSize="16" color="#4D3C27CC" textColor="#FFFFFFFF" />
+      <Button id="btnRerollStep" onClick="onRerollStep" text="Reroll Decision" fontSize="16" color="#3F324FCC" textColor="#FFFFFFFF" />
       <Button id="btnFinalize" onClick="onFinalizeDeck" text="Finalize Deck (Spawn)" fontSize="16" color="#2A4D3ACC" textColor="#FFFFFFFF" />
     </GridLayout>
 

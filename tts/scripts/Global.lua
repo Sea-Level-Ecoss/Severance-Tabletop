@@ -1483,6 +1483,12 @@ function onSkipStep(arg1, arg2)
   end
 
   local previousSkips = state.deckbuild.skipsUsed or 0
+  if previousSkips >= (state.deckbuild.maxSkips or config.maxSkips) then
+    broadcastToColor("Skip rejected: maximum skips reached for this draft.", playerColor, { 1, 0.7, 0.4 })
+    refreshSetupStatus(state.deckbuild and state.deckbuild.role or uiState.currentDeckbuilderRole)
+    return
+  end
+
   state.deckbuild.skipsUsed = math.min(previousSkips + 1, state.deckbuild.maxSkips or config.maxSkips)
   if previousSkips < (state.deckbuild.maxSkips or config.maxSkips)
     and state.deckbuild.decisionBudget and state.deckbuild.maxDecisionBudget
@@ -1768,6 +1774,25 @@ function sampleGuidedDecisionOptions(role, decisionIndex, count)
     end
   end
 
+  if #selected < count then
+    local fallbackPool = {}
+    for _, rank in ipairs(taxonomyOrderByRole.presence) do
+      for _, card in ipairs(poolByRank[rank] or {}) do
+        if card and not selectedIds[card.id] then
+          table.insert(fallbackPool, card)
+        end
+      end
+    end
+
+    local topUps = sampleCards(fallbackPool, count - #selected)
+    for _, card in ipairs(topUps) do
+      if card and not selectedIds[card.id] then
+        selectedIds[card.id] = true
+        table.insert(selected, card)
+      end
+    end
+  end
+
   return selected
 end
 
@@ -1794,7 +1819,7 @@ function prepareCurrentStepOptions(playerColor)
   broadcastToColor(header, playerColor, { 0.8, 0.9, 1 })
 
   if #state.deckbuild.currentOptions == 0 then
-    broadcastToColor("No available cards in this rank. Advancing.", playerColor, { 1, 0.8, 0.4 })
+    broadcastToColor("No available cards for this decision. Advancing.", playerColor, { 1, 0.8, 0.4 })
     advanceDeckbuildStep(playerColor)
     return
   end
@@ -1842,7 +1867,7 @@ function pickDeckbuildCard(cardId, playerColor)
     return true
   end
 
-  broadcastToColor("Remaining options this step:", playerColor, { 1, 1, 1 })
+  broadcastToColor("Remaining options this decision:", playerColor, { 1, 1, 1 })
   for _, card in ipairs(state.deckbuild.currentOptions) do
     broadcastToColor(string.format("- %s (%s)", card.display_name or "", card.id or ""), playerColor, { 0.8, 0.8, 0.8 })
   end
