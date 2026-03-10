@@ -1,8 +1,12 @@
 const fs = require('fs');
 const path = require('path');
 
-const repo = 'c:/Users/broki/OneDrive/Desktop/Sea Level/Severance-Tabletop';
-const saves = 'C:/Users/broki/OneDrive/Documents/My Games/Tabletop Simulator/Saves';
+const repo = path.resolve(__dirname, '..');
+const userProfile = process.env.USERPROFILE || 'C:/Users/broki';
+const oneDrive = process.env.OneDrive || path.join(userProfile, 'OneDrive');
+const defaultSaves = path.join(oneDrive, 'Documents', 'My Games', 'Tabletop Simulator', 'Saves');
+const fallbackSaves = path.join(userProfile, 'Documents', 'My Games', 'Tabletop Simulator', 'Saves');
+const saves = fs.existsSync(defaultSaves) ? defaultSaves : fallbackSaves;
 const saveInfosPath = path.join(saves, 'SaveFileInfos.json');
 const defaultSaveName = '[DEV] Severance Playtest';
 const requestedName = process.argv[3] || defaultSaveName;
