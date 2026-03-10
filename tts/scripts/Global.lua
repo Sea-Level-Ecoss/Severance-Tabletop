@@ -10,6 +10,7 @@ local config = {
   fallbackCardFaceUrl = "http://localhost:8787/images/ss_cards/card_back.png",
   cacheTtlSeconds = 300,
   optionCountPerStep = 3,
+  decisionBiasTransition = 30,
   baseDecisionBudget = 40,
   maxDecisionBudget = 47,
   maxSkips = 7,
@@ -282,6 +283,20 @@ function resolveActiveRole(playerColor)
   return nil
 end
 
+function validateDistinctRolePlayers(playerColor)
+  local presenceColor = getRoleSetup("presence").playerColor
+  local absenceColor = getRoleSetup("absence").playerColor
+  if not presenceColor or not absenceColor then
+    broadcastToColor("Both Presence and Absence roles must be claimed before this action.", playerColor or "White", { 1, 0.7, 0.4 })
+    return false
+  end
+  if presenceColor == absenceColor then
+    broadcastToColor("Presence and Absence must be assigned to different player colors.", playerColor or "White", { 1, 0.6, 0.4 })
+    return false
+  end
+  return true
+end
+
 function refreshSetupStatus(role)
   ensureSetupDefaults()
   local text = "Status: Ready"
@@ -298,6 +313,7 @@ function refreshSetupStatus(role)
     local essaLabel = setup.essaId and "yes" or "no"
     local progress = "0/0"
     local skips = "0/" .. tostring(config.maxSkips)
+    local firstPlayer = state.setup.firstPlayer and getRoleLabel(state.setup.firstPlayer) or "pending"
 
     if state.deckbuild and state.deckbuild.role == activeRole then
       local shown = tonumber(state.deckbuild.decisionsShown or 0) or 0
@@ -306,7 +322,7 @@ function refreshSetupStatus(role)
       skips = tostring(state.deckbuild.skipsUsed or 0) .. "/" .. tostring(state.deckbuild.maxSkips or config.maxSkips)
     end
 
-    text = string.format("Status: %s | mode %s | decision %s | skips %s | Essa %s", roleLabel, modeLabel, progress, skips, essaLabel)
+    text = string.format("Status: %s | mode %s | decision %s | skips %s | Essa %s | First %s", roleLabel, modeLabel, progress, skips, essaLabel, firstPlayer)
   elseif state.statusText and state.statusText ~= "" then
     text = state.statusText
   end
@@ -323,12 +339,13 @@ function updateSetupUiActions(role)
   end
 
   local inGuided = false
-  local hasEssa = false
   if activeRole then
     local setup = getRoleSetup(activeRole)
     inGuided = setup.mode == "guided"
-    hasEssa = setup.essaId ~= nil
   end
+
+  local bothEssaSelected = getRoleSetup("presence").essaId ~= nil and getRoleSetup("absence").essaId ~= nil
+  local bothHandsResolved = getRoleSetup("presence").startingHandResolved == true and getRoleSetup("absence").startingHandResolved == true
 
   pcall(function()
     UI.setAttribute("btnStartDeckbuildMode", "active", inGuided and "false" or "true")
@@ -340,10 +357,10 @@ function updateSetupUiActions(role)
     UI.setAttribute("btnSelectEssa", "active", activeRole and "true" or "false")
   end)
   pcall(function()
-    UI.setAttribute("btnResolveHands", "active", hasEssa and "true" or "false")
+    UI.setAttribute("btnResolveHands", "active", bothEssaSelected and "true" or "false")
   end)
   pcall(function()
-    UI.setAttribute("btnResolveFirstPlayer", "active", "true")
+    UI.setAttribute("btnResolveFirstPlayer", "active", bothHandsResolved and "true" or "false")
   end)
 end
 
@@ -1129,6 +1146,8 @@ function onStartDeckbuildMode(arg1, arg2)
   local setup = getRoleSetup(role)
   setup.mode = "guided"
   state.setup.phase = "deckbuild"
+  setup.startingHandResolved = false
+  state.setup.firstPlayer = nil
   uiState.currentDeckbuilderRole = role
   uiState.lastPlayerColor = playerColor
 
@@ -1196,6 +1215,9 @@ function onSelectEssa(arg1, arg2)
 
     local setup = getRoleSetup(role)
     setup.essaId = card.id
+    if getRoleSetup("presence").essaId and getRoleSetup("absence").essaId then
+      state.setup.phase = "essa_select"
+    end
     broadcastToColor(getRoleLabel(role) .. " Essa selected: " .. (card.display_name or card.id), playerColor, { 0.8, 1, 0.8 })
     refreshSetupStatus(role)
   end)
@@ -1208,6 +1230,10 @@ function onResolveStartingHands(arg1, arg2)
   end
 
   ensureSetupDefaults()
+  if not validateDistinctRolePlayers(playerColor) then
+    return
+  end
+
   local presenceSetup = getRoleSetup("presence")
   local absenceSetup = getRoleSetup("absence")
   if not presenceSetup.essaId or not absenceSetup.essaId then
@@ -1233,7 +1259,8 @@ function onResolveStartingHands(arg1, arg2)
 
   presenceSetup.startingHandResolved = true
   absenceSetup.startingHandResolved = true
-  state.setup.phase = "ready_to_start"
+  state.setup.phase = "start_resolve"
+  state.setup.firstPlayer = nil
   broadcastToAll("Starting hands resolved (7 cards each).", { 0.8, 1, 0.8 })
   refreshSetupStatus(uiState.currentDeckbuilderRole)
 end
@@ -1241,6 +1268,10 @@ end
 function onResolveFirstPlayer(arg1, arg2)
   local playerColor = resolvePlayerColor(arg1, arg2)
   if not requireSetupHost(playerColor, "Resolve First Player") then
+    return
+  end
+
+  if not validateDistinctRolePlayers(playerColor) then
     return
   end
 
@@ -1255,6 +1286,11 @@ function onResolveFirstPlayer(arg1, arg2)
   local absenceColor = absenceSetup.playerColor or "Black"
   local presenceSum = getOpeningHandManaSum(presenceColor)
   local absenceSum = getOpeningHandManaSum(absenceColor)
+  if presenceSum == 0 and absenceSum == 0 then
+    broadcastToColor("Resolve First Player failed: both opening hands have 0 detected mana.", playerColor, { 1, 0.6, 0.4 })
+    return
+  end
+
   local winnerRole = "presence"
   if absenceSum > presenceSum then
     winnerRole = "absence"
@@ -1282,6 +1318,8 @@ function onImportDecklist(arg1, arg2)
     if roleSetup then
       roleSetup.mode = "import"
       state.setup.phase = "deckbuild"
+      roleSetup.startingHandResolved = false
+      state.setup.firstPlayer = nil
     end
 
     local resolvedCards, missing = resolveDecklist(ids)
@@ -1412,7 +1450,7 @@ function onSkipStep(arg1, arg2)
     state.deckbuild.decisionBudget = math.min(state.deckbuild.decisionBudget + 1, state.deckbuild.maxDecisionBudget)
   end
 
-  broadcastToColor("Step skipped.", playerColor, { 1, 1, 1 })
+  broadcastToColor("Decision skipped.", playerColor, { 1, 1, 1 })
   advanceDeckbuildStep(playerColor)
   refreshSetupStatus(state.deckbuild and state.deckbuild.role or uiState.currentDeckbuilderRole)
 end
@@ -1423,7 +1461,7 @@ function onRerollStep(arg1, arg2)
     broadcastToColor("No active deckbuild. Start Presence/Absence deckbuilding first.", playerColor, { 1, 0.8, 0.4 })
     return
   end
-  broadcastToColor("Step rerolled.", playerColor, { 1, 1, 1 })
+  broadcastToColor("Decision rerolled.", playerColor, { 1, 1, 1 })
   prepareCurrentStepOptions(playerColor)
 end
 
@@ -1577,36 +1615,139 @@ function getCurrentRank()
   if (state.deckbuild.decisionsShown or 1) > (state.deckbuild.decisionBudget or config.baseDecisionBudget) then
     return nil
   end
-  local order = state.deckbuild.order or {}
-  if #order == 0 then
+
+  local decisionIndex = state.deckbuild.decisionsShown or 1
+  local rankWeights = getRankWeightsForDecision(state.deckbuild.role, decisionIndex)
+  if not rankWeights then
     return nil
   end
-  local decisionIndex = state.deckbuild.decisionsShown or 1
-  local orderIndex = ((decisionIndex - 1) % #order) + 1
-  return order[orderIndex]
+  return pickWeightedRank(rankWeights)
+end
+
+function getRankWeightsForDecision(role, decisionIndex)
+  local order = taxonomyOrderByRole.presence
+  local transition = config.decisionBiasTransition or 30
+  local latePhase = decisionIndex > transition
+  local earlyFactor = math.max(0, (transition + 1 - decisionIndex) / transition)
+
+  local weights = {}
+  for i, rank in ipairs(order) do
+    local isPreferred = false
+    if role == "presence" then
+      isPreferred = i >= 5
+    else
+      isPreferred = i <= 5
+    end
+
+    local w = 1.0
+    if latePhase then
+      w = isPreferred and 1.1 or 0.9
+    else
+      w = isPreferred and (1.0 + (2.0 * earlyFactor)) or 1.0
+    end
+    weights[rank] = w
+  end
+
+  return weights
+end
+
+function pickWeightedRank(rankWeights)
+  local total = 0
+  for _, weight in pairs(rankWeights or {}) do
+    total = total + (tonumber(weight) or 0)
+  end
+  if total <= 0 then return nil end
+
+  local roll = math.random() * total
+  local running = 0
+  for _, rank in ipairs(taxonomyOrderByRole.presence) do
+    local w = tonumber(rankWeights[rank] or 0) or 0
+    running = running + w
+    if roll <= running then
+      return rank
+    end
+  end
+
+  return taxonomyOrderByRole.presence[#taxonomyOrderByRole.presence]
+end
+
+function buildGuidedOptionPoolByRank()
+  local byRank = {}
+  for _, rank in ipairs(taxonomyOrderByRole.presence) do
+    byRank[rank] = {}
+  end
+
+  for _, card in ipairs(state.cards or {}) do
+    local rank = card.taxonomy_rank
+    if rank and byRank[rank]
+      and not state.deckbuild.pickedIds[card.id]
+      and isDrawEligibleCard(card)
+    then
+      table.insert(byRank[rank], card)
+    end
+  end
+
+  return byRank
+end
+
+function sampleGuidedDecisionOptions(role, decisionIndex, count)
+  local poolByRank = buildGuidedOptionPoolByRank()
+  local rankWeights = getRankWeightsForDecision(role, decisionIndex)
+  local selected = {}
+  local selectedIds = {}
+
+  for _ = 1, count do
+    local workingWeights = {}
+    for rank, weight in pairs(rankWeights) do
+      if poolByRank[rank] and #poolByRank[rank] > 0 then
+        workingWeights[rank] = weight
+      end
+    end
+
+    local rank = pickWeightedRank(workingWeights)
+    if not rank then break end
+
+    local cardsForRank = poolByRank[rank]
+    local tries = 0
+    local picked = nil
+    while tries < 8 and cardsForRank and #cardsForRank > 0 do
+      local idx = math.random(1, #cardsForRank)
+      local candidate = cardsForRank[idx]
+      if candidate and not selectedIds[candidate.id] then
+        picked = candidate
+        table.remove(cardsForRank, idx)
+        break
+      end
+      table.remove(cardsForRank, idx)
+      tries = tries + 1
+    end
+
+    if picked then
+      selectedIds[picked.id] = true
+      table.insert(selected, picked)
+    end
+  end
+
+  return selected
 end
 
 function prepareCurrentStepOptions(playerColor)
   if not state.deckbuild then return end
 
-  local rank = getCurrentRank()
-  if not rank then
+  if (state.deckbuild.decisionsShown or 1) > (state.deckbuild.decisionBudget or config.baseDecisionBudget) then
     broadcastToColor("Decision budget complete. Finalize deck when ready.", playerColor, { 0.7, 1, 0.7 })
     updateStatusUi("Deckbuild complete. Finalize deck.")
+    refreshSetupStatus(state.deckbuild.role)
     return
   end
 
-  local pool = {}
-  for _, card in ipairs(state.cards) do
-    if equalsIgnoreCase(card.taxonomy_rank, rank)
-      and not state.deckbuild.pickedIds[card.id]
-      and isDrawEligibleCard(card)
-    then
-      table.insert(pool, card)
-    end
-  end
-
-  state.deckbuild.currentOptions = sampleCards(pool, config.optionCountPerStep)
+  local decisionIndex = state.deckbuild.decisionsShown or 1
+  local rank = getCurrentRank() or "Mixed"
+  state.deckbuild.currentOptions = sampleGuidedDecisionOptions(
+    state.deckbuild.role,
+    decisionIndex,
+    config.optionCountPerStep
+  )
   state.deckbuild.picksThisDecision = 0
 
   local header = string.format("Draft Decision %d/%d - %s", state.deckbuild.decisionsShown, state.deckbuild.decisionBudget, rank)
