@@ -5,7 +5,8 @@ This is the coding execution order for Milestone A.
 ## Progress Snapshot
 
 - PR-1 complete on branch `feature/tts-implementation-readiness` at commit `2ab8897`.
-- Remaining work is focused on replacing step draft flow with 40-decision draft logic and tightening start-resolution validation.
+- PR-2 started at commit `29d9379` with a decision-budget draft loop (`decision x / budget`) replacing strict step progression.
+- Remaining work is focused on weighted pool selection + legality hardening for the full 40/47 guided draft target.
 
 ## Task Group 1: Setup State Machine
 
