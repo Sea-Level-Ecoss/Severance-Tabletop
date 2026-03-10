@@ -19,7 +19,7 @@
       <Button id="btnSelectEssa" onClick="onSelectEssa" text="Select Essa (from Search ID)" fontSize="16" color="#28465ACC" textColor="#FFFFFFFF" />
       <Button id="btnResolveHands" onClick="onResolveStartingHands" text="Resolve Starting Hands" fontSize="16" color="#2B4B38CC" textColor="#FFFFFFFF" />
       <Button id="btnResolveFirstPlayer" onClick="onResolveFirstPlayer" text="Resolve First Player" fontSize="16" color="#364D2FCC" textColor="#FFFFFFFF" />
-      <Text text="Host-only setup transitions" fontSize="16" color="#A9B6D6" alignment="MiddleCenter" />
+      <Button id="btnValidateScene" onClick="onValidateScene" text="Validate Scene Wiring" fontSize="16" color="#3C3E4FCC" textColor="#FFFFFFFF" />
     </GridLayout>
 
     <Text text="Import Decklist" fontSize="22" color="#D6DDF0" />
