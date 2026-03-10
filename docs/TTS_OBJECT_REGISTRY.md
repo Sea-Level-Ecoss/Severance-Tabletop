@@ -44,3 +44,6 @@ Canonical object and zone names for the current local development save (`TS_Save
   - play-zone refresh triggers (`Presence Field`, `Absence Field`, `Mean Field`)
   - rulebook and taxon calculator object lookup
 - Tags remain preferred where present; names are fallback compatibility.
+- In-game validator is available via:
+  - UI button: `Validate Scene Wiring`
+  - Context menu: `Validate Scene Wiring`

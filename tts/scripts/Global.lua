@@ -139,6 +139,38 @@ local nameRegistry = {
   absencePlayZones = { "Absence Field", "Mean Field" },
 }
 
+local sceneValidationEntries = {
+  { label = "Absence Deck", kind = "object", names = { "Absence Deck" }, tag = tags.absenceDeck },
+  { label = "Presence Deck", kind = "object", names = { "Presence Deck" }, tag = tags.presenceDeck },
+  { label = "Absence Deckbuilder", kind = "object", names = { "Absence Deckbuilder" }, tag = tags.absenceDeckbuilder },
+  { label = "Presence Deckbuilder", kind = "object", names = { "Presence Deckbuilder" }, tag = tags.presenceDeckbuilder },
+  { label = "Absence Taxon Calculator", kind = "object", names = { "Absence Taxon Calculator" }, tag = tags.absenceTaxonCalc },
+  { label = "Presence Taxon Calculator", kind = "object", names = { "Presence Taxon Calculator" }, tag = tags.presenceTaxonCalc },
+  { label = "Absence Rulebook", kind = "object", names = { "Absence Rulebook" }, tag = tags.absenceRulebook },
+  { label = "Presence Rulebook", kind = "object", names = { "Presence Rulebook" }, tag = tags.presenceRulebook },
+  { label = "Absence Right Split Deck", kind = "object", names = { "Absence Right Split Deck" } },
+  { label = "Absence Right Split", kind = "object", names = { "Absence Right Split" } },
+  { label = "Absence Essa Right Split", kind = "object", names = { "Absence Essa Right Split" } },
+  { label = "Absence Center", kind = "object", names = { "Absence Center" } },
+  { label = "Absence Essa", kind = "object", names = { "Absence Essa" }, tag = tags.absenceEssa },
+  { label = "Absence Left Split Deck", kind = "object", names = { "Absence Left Split Deck" } },
+  { label = "Absence Left Split", kind = "object", names = { "Absence Left Split" } },
+  { label = "Absence Essa Left Split", kind = "object", names = { "Absence Essa Left Split" } },
+  { label = "Presence Left Split", kind = "object", names = { "Presence Left Split" } },
+  { label = "Presence Essa Left Split", kind = "object", names = { "Presence Essa Left Split" } },
+  { label = "Presence Left Split Deck", kind = "object", names = { "Presence Left Split Deck" } },
+  { label = "Presence Center", kind = "object", names = { "Presence Center" } },
+  { label = "Presence Essa", kind = "object", names = { "Presence Essa" }, tag = tags.presenceEssa },
+  { label = "Presence Right Split", kind = "object", names = { "Presence Right Split" } },
+  { label = "Presence Essa Right Split", kind = "object", names = { "Presence Essa Right Split" } },
+  { label = "Presence Right Split Deck", kind = "object", names = { "Presence Right Split Deck" } },
+  { label = "Presence Field", kind = "zone", names = { "Presence Field" }, tags = { "PresencePlayZone", "PresencePlay", "PresenceInPlay" } },
+  { label = "Mean Field", kind = "zone", names = { "Mean Field" } },
+  { label = "Absence Field", kind = "zone", names = { "Absence Field" }, tags = { "AbsencePlayZone", "AbsencePlay", "AbsenceInPlay" } },
+  { label = "Presence Hand", kind = "zone", names = { "Presence Hand" } },
+  { label = "Absence Hand", kind = "zone", names = { "Absence Hand" } },
+}
+
 local taxonomyOrderByRole = {
   presence = { "Bin", "Basin", "Eco", "Kingdom", "Phylum", "Class", "Order", "Family", "Essa" },
   absence = { "Essa", "Family", "Order", "Class", "Phylum", "Kingdom", "Eco", "Basin", "Bin" },
@@ -196,6 +228,9 @@ function onLoad(savedState)
   end)
   safeRun("add menu rulebooks", function()
     addContextMenuItem("Refresh Rulebooks", onRefreshRulebooksFromContext, false, true)
+  end)
+  safeRun("add menu validate scene", function()
+    addContextMenuItem("Validate Scene Wiring", onValidateSceneFromContext, false, true)
   end)
   safeRun("ensure zones", ensureZoneMarkers)
   safeRun("schedule refreshes", scheduleRulebookRefreshes)
@@ -443,6 +478,10 @@ end
 
 function onHideDeckbuilderFromContext(playerColor, menuPosition)
   closeDeckbuilderUi(playerColor)
+end
+
+function onValidateSceneFromContext(playerColor, menuPosition)
+  onValidateScene(playerColor, nil)
 end
 
 function onCloseDeckbuilderUi(playerColor, value, id)
@@ -1059,6 +1098,103 @@ function zoneHasAnyTagOrName(zone, tagList, nameList)
     return true
   end
   return objectNameMatchesAny(zone, nameList)
+end
+
+function getObjectsByAnyTags(tagList)
+  local out = {}
+  local seen = {}
+  for _, tagName in ipairs(tagList or {}) do
+    local tagged = getObjectsWithTag(tagName) or {}
+    for _, obj in ipairs(tagged) do
+      if obj and not obj.isDestroyed() then
+        local guid = nil
+        local okGuid, g = pcall(function() return obj.getGUID() end)
+        if okGuid and g then
+          guid = tostring(g)
+        end
+        if not guid or not seen[guid] then
+          if guid then
+            seen[guid] = true
+          end
+          table.insert(out, obj)
+        end
+      end
+    end
+  end
+  return out
+end
+
+function resolveSceneEntryStatus(entry)
+  local via = "missing"
+  local count = 0
+
+  local tagCandidates = {}
+  if entry.tag then
+    table.insert(tagCandidates, entry.tag)
+  end
+  for _, t in ipairs(entry.tags or {}) do
+    table.insert(tagCandidates, t)
+  end
+
+  if #tagCandidates > 0 then
+    local tagged = getObjectsByAnyTags(tagCandidates)
+    if #tagged > 0 then
+      return "tag", #tagged
+    end
+  end
+
+  local named = getObjectsByNameList(entry.names or {})
+  if #named > 0 then
+    return "name", #named
+  end
+
+  return via, count
+end
+
+function onValidateScene(arg1, arg2)
+  local playerColor = resolvePlayerColor(arg1, arg2)
+
+  local lines = {}
+  local tagCount = 0
+  local nameCount = 0
+  local missingCount = 0
+
+  for _, entry in ipairs(sceneValidationEntries) do
+    local via, count = resolveSceneEntryStatus(entry)
+    if via == "tag" then
+      tagCount = tagCount + 1
+      table.insert(lines, string.format("[TAG] %s (%d)", entry.label, count))
+    elseif via == "name" then
+      nameCount = nameCount + 1
+      table.insert(lines, string.format("[NAME] %s (%d)", entry.label, count))
+    else
+      missingCount = missingCount + 1
+      table.insert(lines, string.format("[MISSING] %s", entry.label))
+    end
+  end
+
+  local summary = string.format(
+    "Scene wiring: %d via tag, %d via name fallback, %d missing",
+    tagCount,
+    nameCount,
+    missingCount
+  )
+
+  local summaryColor = missingCount == 0 and { 0.75, 1, 0.75 } or { 1, 0.75, 0.4 }
+  broadcastToColor(summary, playerColor, summaryColor)
+  for _, line in ipairs(lines) do
+    local c = { 0.85, 0.85, 0.85 }
+    if string.sub(line, 1, 9) == "[MISSING]" then
+      c = { 1, 0.6, 0.4 }
+    elseif string.sub(line, 1, 6) == "[NAME]" then
+      c = { 0.95, 0.9, 0.6 }
+    elseif string.sub(line, 1, 5) == "[TAG]" then
+      c = { 0.75, 0.95, 0.75 }
+    end
+    broadcastToColor(line, playerColor, c)
+  end
+
+  updateStatusUi(summary)
 end
 
 function onRefreshRulebooksFromContext(playerColor, menuPosition)
